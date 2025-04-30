@@ -1,0 +1,94 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS End-to-End Deployment Example - Main Stack'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    Description: Environment name (dev, staging, prod)
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+
+  DomainName:
+    Type: String
+    Description: Domain name for the application
+
+  CertificateArn:
+    Type: String
+    Description: ARN of the ACM certificate for the domain
+
+Resources:
+  # VPC and Network Resources
+  NetworkStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./networking.yaml
+      Parameters:
+        Environment: !Ref Environment
+
+  # ECR Repository for Backend API
+  ECRStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./ecr.yaml
+      Parameters:
+        Environment: !Ref Environment
+
+  # ECS Cluster, Task Definition, and Service for Backend API
+  ECSStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./ecs.yaml
+      Parameters:
+        Environment: !Ref Environment
+        VpcId: !GetAtt NetworkStack.Outputs.VpcId
+        PublicSubnet1: !GetAtt NetworkStack.Outputs.PublicSubnet1
+        PublicSubnet2: !GetAtt NetworkStack.Outputs.PublicSubnet2
+        EcrRepositoryUri: !GetAtt ECRStack.Outputs.RepositoryUri
+    DependsOn:
+      - NetworkStack
+      - ECRStack
+
+  # Application Load Balancer for Backend API
+  ALBStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./alb.yaml
+      Parameters:
+        Environment: !Ref Environment
+        VpcId: !GetAtt NetworkStack.Outputs.VpcId
+        PublicSubnet1: !GetAtt NetworkStack.Outputs.PublicSubnet1
+        PublicSubnet2: !GetAtt NetworkStack.Outputs.PublicSubnet2
+        EcsServiceName: !GetAtt ECSStack.Outputs.ServiceName
+        EcsClusterName: !GetAtt ECSStack.Outputs.ClusterName
+    DependsOn:
+      - NetworkStack
+      - ECSStack
+
+  # S3 and CloudFront for Frontend
+  FrontendStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./cloudfront.yaml
+      Parameters:
+        Environment: !Ref Environment
+        DomainName: !Ref DomainName
+        CertificateArn: !Ref CertificateArn
+        ApiEndpoint: !GetAtt ALBStack.Outputs.LoadBalancerDnsName
+    DependsOn:
+      - ALBStack
+
+Outputs:
+  ApiEndpoint:
+    Description: API Endpoint URL
+    Value: !GetAtt ALBStack.Outputs.LoadBalancerDnsName
+
+  FrontendUrl:
+    Description: Frontend URL
+    Value: !GetAtt FrontendStack.Outputs.CloudFrontDomainName
+
+  CustomDomainUrl:
+    Description: Custom Domain URL
+    Value: !Sub "https://${DomainName}"

@@ -1,0 +1,9 @@
+api/api
+frontend/node_modules
+frontend/dist
+
+.actenv
+.actsecrets
+.actvars
+.actrc
+.roorules
