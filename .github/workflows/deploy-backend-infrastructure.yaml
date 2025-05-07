@@ -1,0 +1,162 @@
+name: Deploy Backend Infrastructure CloundFormation Stacks
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      LogGroupArn:
+        description: "The ARN of the CloudWatch Log Group created in the logging stack"
+        value: ${{ jobs.deploy-logging.outputs.LogGroupArn }}
+      VpcId:
+        description: "The ID of the VPC created in the networking stack"
+        value: ${{ jobs.deploy-networking.outputs.VpcId }}
+      PublicSubnet1:
+        description: "The ID of the first public subnet created in the networking stack"
+        value: ${{ jobs.deploy-networking.outputs.PublicSubnet1 }}
+      PublicSubnet2:
+        description: "The ID of the second public subnet created in the networking stack"
+        value: ${{ jobs.deploy-networking.outputs.PublicSubnet2 }}
+      EcsClusterName:
+        description: "The name of the ECS cluster created in the ECS stack"
+        value: ${{ jobs.deploy-ecs-cluster.outputs.EcsClusterName }}
+      SecurityGroupId:
+        description: "The ID of the security group created in the ECS stack"
+        value: ${{ jobs.deploy-ecs-cluster.outputs.SecurityGroupId }}
+
+jobs:
+  deploy-logging:
+    name: Deploy Logging Stack
+    runs-on: ubuntu-latest
+    outputs:
+      LogGroupArn: ${{ steps.deploy-logging-stack.outputs.LogGroupArn }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: ./.github/actions/configure-aws-credentials
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Deploy Logging Stack
+        id: deploy-logging-stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: LoggingStack
+          template: iac/logging.yaml
+          parameters: |
+            Environment=${{ env.ENVIRONMENT }}
+          capabilities: CAPABILITY_NAMED_IAM
+          no-fail-on-empty-changeset: "1"
+
+  deploy-network-stack:
+    name: Deploy Backend Networking
+    runs-on: ubuntu-latest
+    outputs:
+      VpcId: ${{ steps.deploy-network-stack.outputs.VpcId }}
+      PublicSubnet1: ${{ steps.deploy-network-stack.outputs.PublicSubnet1 }}
+      PublicSubnet2: ${{ steps.deploy-network-stack.outputs.PublicSubnet2 }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: ./.github/actions/configure-aws-credentials
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Deploy Networking Stack
+        id: deploy-network-stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: NetworkStack
+          template: iac/networking.yaml
+          parameters: |
+            Environment=${{ env.ENVIRONMENT }}
+          capabilities: CAPABILITY_NAMED_IAM
+          no-fail-on-empty-changeset: "1"
+
+  deploy-ecs-cluster:
+    name: Deploy ECS Cluster
+    runs-on: ubuntu-latest
+    needs:
+      deploy-logging
+      deploy-network-stack
+    outputs:
+      EcsClusterName: ${{ steps.deploy-ecs-stack.outputs.EcsClusterName }}
+      SecurityGroupId: ${{ steps.deploy-ecs-stack.outputs.SecurityGroupId }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: ./.github/actions/configure-aws-credentials
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Deploy ECS Stack
+        id: deploy-ecs-stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ECSStack
+          template: iac/ecs.yaml
+          parameters: |
+            Environment=${{ env.ENVIRONMENT }}
+            VpcId=${{ needs.deploy-network-stack.outputs.VpcId }}
+            PublicSubnet1=${{ needs.deploy-network-stack.outputs.PublicSubnet1 }}
+            PublicSubnet2=${{ needs.deploy-network-stack.outputs.PublicSubnet2 }}
+            LogGroupArn=${{ needs.deploy-logging.outputs.LogGroupArn }}
+            ContainerPort=${{ env.API_CONTAINER_PORT }}
+          capabilities: CAPABILITY_NAMED_IAM
+          no-fail-on-empty-changeset: "1"
+
+  deploy-load-balancer:
+    name: Deploy Load Balancer
+    runs-on: ubuntu-latest
+    needs:
+      deploy-network-stack
+    outputs:
+      LoadBalancerArn: ${{ steps.deploy-alb-stack.outputs.LoadBalancerArn }}
+      TargetGroupArn: ${{ steps.deploy-alb-stack.outputs.TargetGroupArn }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: ./.github/actions/configure-aws-credentials
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Deploy ALB Stack
+        id: deploy-alb-stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ALBStack
+          template: iac/alb.yaml
+          parameters: |
+            Environment=${{ env.ENVIRONMENT }}
+            VpcId=${{ needs.deploy-network-stack.outputs.VpcId }}
+            PublicSubnet1=${{ needs.deploy-network-stack.outputs.PublicSubnet1 }}
+            PublicSubnet2=${{ needs.deploy-network-stack.outputs.PublicSubnet2 }}
+          capabilities: CAPABILITY_NAMED_IAM
+          no-fail-on-empty-changeset: "1"

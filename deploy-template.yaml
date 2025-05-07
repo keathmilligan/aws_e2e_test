@@ -1,0 +1,122 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS End-to-End Deployment Example - Main Stack
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    Description: Environment name (dev, staging, prod)
+    AllowedValues:
+    - dev
+    - staging
+    - prod
+  DomainName:
+    Type: String
+    Description: Domain name for the application
+  CertificateArn:
+    Type: String
+    Description: ARN of the ACM certificate for the domain
+Resources:
+  NetworkStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.us-east-1.amazonaws.com/keathmilligan-cloudformation/ba53e796d41eca6ef94f9f24d626cc89.template
+      Parameters:
+        Environment:
+          Ref: Environment
+  ECRStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.us-east-1.amazonaws.com/keathmilligan-cloudformation/e5d5b558ecd52c3c46be08c0360e0bf5.template
+      Parameters:
+        Environment:
+          Ref: Environment
+  ECSStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.us-east-1.amazonaws.com/keathmilligan-cloudformation/6a4ba43a595ed31e34e4e8fd96b69794.template
+      Parameters:
+        Environment:
+          Ref: Environment
+        VpcId:
+          Fn::GetAtt:
+          - NetworkStack
+          - Outputs.VpcId
+        PublicSubnet1:
+          Fn::GetAtt:
+          - NetworkStack
+          - Outputs.PublicSubnet1
+        PublicSubnet2:
+          Fn::GetAtt:
+          - NetworkStack
+          - Outputs.PublicSubnet2
+        EcrRepositoryUri:
+          Fn::GetAtt:
+          - ECRStack
+          - Outputs.RepositoryUri
+    DependsOn:
+    - NetworkStack
+    - ECRStack
+  ALBStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.us-east-1.amazonaws.com/keathmilligan-cloudformation/28f5051a03bc89ec37cf2a3b9b597654.template
+      Parameters:
+        Environment:
+          Ref: Environment
+        VpcId:
+          Fn::GetAtt:
+          - NetworkStack
+          - Outputs.VpcId
+        PublicSubnet1:
+          Fn::GetAtt:
+          - NetworkStack
+          - Outputs.PublicSubnet1
+        PublicSubnet2:
+          Fn::GetAtt:
+          - NetworkStack
+          - Outputs.PublicSubnet2
+        EcsServiceName:
+          Fn::GetAtt:
+          - ECSStack
+          - Outputs.ServiceName
+        EcsClusterName:
+          Fn::GetAtt:
+          - ECSStack
+          - Outputs.ClusterName
+    DependsOn:
+    - NetworkStack
+    - ECSStack
+  FrontendStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.us-east-1.amazonaws.com/keathmilligan-cloudformation/7a5ddf5e3ed84376b5818617a6830907.template
+      Parameters:
+        Environment:
+          Ref: Environment
+        DomainName:
+          Ref: DomainName
+        CertificateArn:
+          Ref: CertificateArn
+        ApiEndpoint:
+          Fn::GetAtt:
+          - ALBStack
+          - Outputs.LoadBalancerDnsName
+    DependsOn:
+    - ALBStack
+Outputs:
+  ApiEndpoint:
+    Description: API Endpoint URL
+    Value:
+      Fn::GetAtt:
+      - ALBStack
+      - Outputs.LoadBalancerDnsName
+  FrontendUrl:
+    Description: Frontend URL
+    Value:
+      Fn::GetAtt:
+      - FrontendStack
+      - Outputs.CloudFrontDomainName
+  CustomDomainUrl:
+    Description: Custom Domain URL
+    Value:
+      Fn::Sub: https://${DomainName}

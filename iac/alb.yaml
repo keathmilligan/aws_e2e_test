@@ -19,14 +19,6 @@ Parameters:
     Type: String
     Description: Public Subnet 2 ID
 
-  EcsServiceName:
-    Type: String
-    Description: ECS Service Name
-
-  EcsClusterName:
-    Type: String
-    Description: ECS Cluster Name
-
   HealthCheckPath:
     Type: String
     Default: /health
@@ -36,6 +28,21 @@ Parameters:
     Type: Number
     Default: 80
     Description: ALB listener port
+
+  SecurityGroupTag:
+    Type: String
+    Default: awse2e-alb-sg
+    Description: Tag for the ALB security group
+
+  LoadBalancerName:
+    Type: String
+    Default: awse2e-alb
+    Description: Name of the Application Load Balancer
+
+  TargetGroupName:
+    Type: String
+    Default: awse2e-tg
+    Description: Name of the target group
 
 Resources:
   # ALB Security Group
@@ -51,7 +58,7 @@ Resources:
           CidrIp: 0.0.0.0/0
       Tags:
         - Key: Name
-          Value: !Sub "${Environment}-awse2e-alb-sg"
+          Value: !Sub "${Environment}-${SecurityGroupTag}"
         - Key: Environment
           Value: !Ref Environment
 
@@ -59,7 +66,7 @@ Resources:
   ApplicationLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
-      Name: !Sub "${Environment}-awse2e-alb"
+      Name: !Sub "${Environment}-${LoadBalancerName}"
       Scheme: internet-facing
       LoadBalancerAttributes:
         - Key: idle_timeout.timeout_seconds
@@ -77,7 +84,7 @@ Resources:
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      Name: !Sub "${Environment}-awse2e-tg"
+      Name: !Sub "${Environment}-${TargetGroupName}"
       VpcId: !Ref VpcId
       Port: 8080
       Protocol: HTTP
@@ -101,17 +108,6 @@ Resources:
       DefaultActions:
         - Type: forward
           TargetGroupArn: !Ref TargetGroup
-
-  # Update ECS Service to use the ALB
-  ECSServiceUpdate:
-    Type: AWS::ECS::Service
-    Properties:
-      ServiceName: !Ref EcsServiceName
-      Cluster: !Ref EcsClusterName
-      LoadBalancers:
-        - TargetGroupArn: !Ref TargetGroup
-          ContainerName: !Sub "${Environment}-awse2e-container"
-          ContainerPort: 8080
 
 Outputs:
   LoadBalancerDnsName:

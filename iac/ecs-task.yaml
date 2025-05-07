@@ -1,0 +1,105 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS End-to-End Deployment Example - ECS Task Stack'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    Description: Environment name (dev, staging, prod)
+
+  EcrRepositoryUri:
+    Type: String
+    Description: ECR Repository URI
+
+  ContainerName:
+    Type: String
+    Default: awse2e-container
+    Description: Name of the ECS container
+
+  ContainerCpu:
+    Type: String
+    Default: 256
+    Description: CPU units for the container (e.g., 256, 512, 1024)
+
+  ContainerMemory:
+    Type: String
+    Default: 512
+    Description: Memory in MiB for the container (e.g., 512, 1024, 2048)
+
+  ContainerPort:
+    Type: Number
+    Default: 8080
+    Description: Container port
+  
+  TaskFamily:
+    Type: String
+    Default: awse2e-task
+    Description: ECS Task Family name
+  
+  SecurityGroupTag:
+    Type: String
+    Default: awse2e-ecs-sg
+    Description: Tag for the ECS security group
+
+  LogGroupArn:
+    Type: String
+    Description: ARN of the CloudWatch Log Group
+
+Resources:
+  # ECS Task Execution Role
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ECS Task Definition
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${Environment}-${TaskFamily}"
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: !Ref ContainerCpu
+      Memory: !Ref ContainerMemory
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: !Sub "${Environment}-${ContainerName}"
+          Image: !Sub "${EcrRepositoryUri}"
+          Essential: true
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+              HostPort: !Ref ContainerPort
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroupArn
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          Environment:
+            - Name: SERVER_ADDRESS
+              Value: !Sub ":${ContainerPort}"
+            - Name: CORS_ORIGINS
+              Value: "*"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  TaskDefinitionArn:
+    Description: Task Definition ARN
+    Value: !Ref TaskDefinition
+    Export:
+      Name: !Sub "${AWS::StackName}-TaskDefinitionArn"

@@ -6,13 +6,16 @@ Parameters:
     Type: String
     Default: dev
     Description: Environment name (dev, staging, prod)
+  
+  RepositoryName:
+    Type: String
+    Description: Name of the ECR repository
 
 Resources:
-  # ECR Repository for Backend API
   BackendRepository:
     Type: AWS::ECR::Repository
     Properties:
-      RepositoryName: !Sub "${Environment}-awse2e-backend"
+      RepositoryName: !Sub "${Environment}-${RepositoryName}"
       ImageScanningConfiguration:
         ScanOnPush: true
       LifecyclePolicy:
@@ -40,7 +43,7 @@ Resources:
 Outputs:
   RepositoryUri:
     Description: ECR Repository URI
-    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${BackendRepository}"
+    Value: !GetAtt BackendRepository.RepositoryUri
     Export:
       Name: !Sub "${AWS::StackName}-RepositoryUri"
 

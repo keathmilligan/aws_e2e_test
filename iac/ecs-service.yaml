@@ -1,0 +1,90 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS End-to-End Deployment Example - ECS Task Stack'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    Description: Environment name (dev, staging, prod)
+
+  ContainerName:
+    Type: String
+    Default: awse2e-container
+    Description: Name of the ECS container
+
+  ContainerPort:
+    Type: Number
+    Default: 8080
+    Description: Container port
+  
+  SecurityGroupTag:
+    Type: String
+    Default: awse2e-ecs-sg
+    Description: Tag for the ECS security group
+
+  ServiceName:
+    Type: String
+    Default: awse2e-service
+    Description: Name of the ECS service
+
+  TaskDefinitionArn:
+    Type: String
+    Description: ECS Task Definition ARN
+
+  TargetGroupArn:
+    Type: String
+    Description: Target Group ARN for the ECS service
+
+Resources:
+  # Security Group for ECS Tasks
+  ECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ECS tasks
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref ContainerPort
+          ToPort: !Ref ContainerPort
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub "${Environment}-${SecurityGroupTag}"
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ECS Service
+  ECSService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub "${Environment}-${ServiceName}"
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref TaskDefinitionArn
+      DesiredCount: 2
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
+          SecurityGroups:
+            - !Ref ECSSecurityGroup
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+      LoadBalancers:
+        - TargetGroupArn: !Ref TargetGroupArn
+          ContainerName: !Ref ContainerName
+          ContainerPort: !Ref ContainerPort
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+      ForceNewDeployment: true
+
+Outputs:
+  ServiceName:
+    Description: ECS Service Name
+    Value: !Ref ECSService
+    Export:
+      Name: !Sub "${AWS::StackName}-ServiceName"

@@ -1,0 +1,35 @@
+name: CloudFront Invalidate
+description: Creates a CloudFront invalidation using the AWS SDK for JavaScript
+
+inputs:
+  distribution-id:
+    description: 'CloudFront distribution ID'
+    required: true
+  paths:
+    description: 'Paths to invalidate (comma-separated)'
+    required: false
+    default: '/*'
+  caller-reference:
+    description: 'A unique identifier for the invalidation batch'
+    required: false
+    default: ''
+  aws-region:
+    description: 'AWS region'
+    required: false
+    default: 'us-east-1'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install dependencies
+      shell: bash
+      run: cd ${{ github.action_path }} && npm install
+
+    - name: Run CloudFront invalidation
+      shell: bash
+      run: node ${{ github.action_path }}/index.js
+      env:
+        INPUT_DISTRIBUTION_ID: ${{ inputs.distribution-id }}
+        INPUT_PATHS: ${{ inputs.paths }}
+        INPUT_CALLER_REFERENCE: ${{ inputs.caller-reference }}
+        INPUT_AWS_REGION: ${{ inputs.aws-region }}

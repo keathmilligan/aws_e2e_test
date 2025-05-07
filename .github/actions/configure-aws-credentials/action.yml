@@ -1,0 +1,40 @@
+name: Configure AWS Credentials
+description: Configures AWS credentials for both GitHub Actions (OIDC) and local development (act)
+
+inputs:
+  role-to-assume:
+    description: 'AWS IAM role to assume when running in GitHub Actions'
+    required: false
+  aws-region:
+    description: 'AWS region to use'
+    required: true
+  aws-access-key-id:
+    description: 'AWS access key ID for local development with act'
+    required: false
+  aws-secret-access-key:
+    description: 'AWS secret access key for local development with act'
+    required: false
+  aws-session-token:
+    description: 'AWS session token for local development with act'
+    required: false
+
+runs:
+  using: "composite"
+  steps:
+    - name: Configure AWS credentials (GitHub Actions)
+      # Use OIDC role for GitHub Actions
+      if: ${{ !env.ACT }}
+      uses: aws-actions/configure-aws-credentials@v3
+      with:
+        role-to-assume: ${{ inputs.role-to-assume }}
+        aws-region: ${{ inputs.aws-region }}
+
+    - name: Configure AWS credentials (local with act)
+      # This step is used when running locally with `act`
+      if: ${{ env.ACT }}
+      uses: aws-actions/configure-aws-credentials@v3
+      with:
+        aws-access-key-id: ${{ inputs.aws-access-key-id }}
+        aws-secret-access-key: ${{ inputs.aws-secret-access-key }}
+        aws-session-token: ${{ inputs.aws-session-token }}
+        aws-region: ${{ inputs.aws-region }}

@@ -7,43 +7,17 @@ Parameters:
     Default: dev
     Description: Environment name (dev, staging, prod)
 
-  VpcId:
+  ClusterName:
     Type: String
-    Description: VPC ID
-
-  PublicSubnet1:
-    Type: String
-    Description: Public Subnet 1 ID
-
-  PublicSubnet2:
-    Type: String
-    Description: Public Subnet 2 ID
-
-  EcrRepositoryUri:
-    Type: String
-    Description: ECR Repository URI
-
-  ContainerPort:
-    Type: Number
-    Default: 8080
-    Description: Container port
-
-  ContainerCpu:
-    Type: Number
-    Default: 256
-    Description: Container CPU units
-
-  ContainerMemory:
-    Type: Number
-    Default: 512
-    Description: Container memory in MiB
+    Default: awse2e-cluster
+    Description: Name of the ECS Cluster
 
 Resources:
   # ECS Cluster
   ECSCluster:
     Type: AWS::ECS::Cluster
     Properties:
-      ClusterName: !Sub "${Environment}-awse2e-cluster"
+      ClusterName: !Sub "${Environment}-${ClusterName}"
       CapacityProviders:
         - FARGATE
         - FARGATE_SPOT
@@ -54,129 +28,9 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
-  # ECS Task Execution Role
-  ECSTaskExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ecs-tasks.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
-
-  # ECS Task Definition
-  TaskDefinition:
-    Type: AWS::ECS::TaskDefinition
-    Properties:
-      Family: !Sub "${Environment}-awse2e-task"
-      RequiresCompatibilities:
-        - FARGATE
-      NetworkMode: awsvpc
-      Cpu: !Ref ContainerCpu
-      Memory: !Ref ContainerMemory
-      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
-      ContainerDefinitions:
-        - Name: !Sub "${Environment}-awse2e-container"
-          Image: !Ref EcrRepositoryUri
-          Essential: true
-          PortMappings:
-            - ContainerPort: !Ref ContainerPort
-              HostPort: !Ref ContainerPort
-              Protocol: tcp
-          LogConfiguration:
-            LogDriver: awslogs
-            Options:
-              awslogs-group: !Ref LogGroup
-              awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: ecs
-          Environment:
-            - Name: SERVER_ADDRESS
-              Value: !Sub ":${ContainerPort}"
-            - Name: CORS_ORIGINS
-              Value: "*"
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
-
-  # CloudWatch Log Group
-  LogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/ecs/${Environment}-awse2e"
-      RetentionInDays: 30
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
-
-  # Security Group for ECS Tasks
-  ECSSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Security group for ECS tasks
-      VpcId: !Ref VpcId
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: !Ref ContainerPort
-          ToPort: !Ref ContainerPort
-          CidrIp: 0.0.0.0/0
-      Tags:
-        - Key: Name
-          Value: !Sub "${Environment}-awse2e-ecs-sg"
-        - Key: Environment
-          Value: !Ref Environment
-
-  # ECS Service
-  ECSService:
-    Type: AWS::ECS::Service
-    Properties:
-      ServiceName: !Sub "${Environment}-awse2e-service"
-      Cluster: !Ref ECSCluster
-      TaskDefinition: !Ref TaskDefinition
-      DesiredCount: 2
-      LaunchType: FARGATE
-      NetworkConfiguration:
-        AwsvpcConfiguration:
-          AssignPublicIp: ENABLED
-          Subnets:
-            - !Ref PublicSubnet1
-            - !Ref PublicSubnet2
-          SecurityGroups:
-            - !Ref ECSSecurityGroup
-      DeploymentConfiguration:
-        MinimumHealthyPercent: 100
-        MaximumPercent: 200
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
-
 Outputs:
   ClusterName:
     Description: ECS Cluster Name
     Value: !Ref ECSCluster
     Export:
       Name: !Sub "${AWS::StackName}-ClusterName"
-
-  ServiceName:
-    Description: ECS Service Name
-    Value: !Ref ECSService
-    Export:
-      Name: !Sub "${AWS::StackName}-ServiceName"
-
-  TaskDefinitionArn:
-    Description: Task Definition ARN
-    Value: !Ref TaskDefinition
-    Export:
-      Name: !Sub "${AWS::StackName}-TaskDefinitionArn"
-
-  SecurityGroupId:
-    Description: Security Group ID
-    Value: !Ref ECSSecurityGroup
-    Export:
-      Name: !Sub "${AWS::StackName}-SecurityGroupId"

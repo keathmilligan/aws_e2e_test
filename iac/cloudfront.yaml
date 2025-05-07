@@ -15,16 +15,16 @@ Parameters:
     Type: String
     Description: ARN of the ACM certificate for the domain
 
-  ApiEndpoint:
+  LoadBalancerDNSName:
     Type: String
-    Description: API Endpoint URL
+    Description: DNS name of the load balancer/API endpoint
 
 Resources:
   # S3 Bucket for Frontend
   FrontendBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "${DomainName}"
+      BucketName: !Sub "${Environment}-frontend"
       AccessControl: Private
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
@@ -110,14 +110,13 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
-
   # SSM Parameter for API Endpoint
   ApiEndpointParameter:
     Type: AWS::SSM::Parameter
     Properties:
       Name: !Sub "/${Environment}/awse2e/api-endpoint"
       Type: String
-      Value: !Sub "http://${ApiEndpoint}"
+      Value: !Sub "http://${LoadBalancerDNSName}"
       Description: API Endpoint URL
       Tags:
         Environment: !Ref Environment
@@ -140,9 +139,3 @@ Outputs:
     Value: !Ref CloudFrontDistribution
     Export:
       Name: !Sub "${AWS::StackName}-CloudFrontDistributionId"
-
-  ApiEndpointUrl:
-    Description: API Endpoint URL
-    Value: !Sub "http://${ApiEndpoint}"
-    Export:
-      Name: !Sub "${AWS::StackName}-ApiEndpointUrl"
