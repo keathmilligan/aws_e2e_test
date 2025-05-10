@@ -59,6 +59,23 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: !Sub "${Environment}-ecr-access-policy"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Explicit permission for ECR authentication token for VPC endpoints
+              - Effect: Allow
+                Action:
+                  - 'ecr:GetAuthorizationToken'
+                Resource: '*'
+              # Explicit permission for pulling from ECR repository
+              - Effect: Allow
+                Action:
+                  - 'ecr:GetDownloadUrlForLayer'
+                  - 'ecr:BatchGetImage'
+                  - 'ecr:BatchCheckLayerAvailability'
+                Resource: !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${Environment}-*"
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -92,6 +109,18 @@ Resources:
                   - 'ssm:GetParameters'
                   - 'ssm:GetParameter'
                 Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${Environment}/awse2e/*"
+              # DynamoDB permissions
+              - Effect: Allow
+                Action:
+                  - 'dynamodb:CreateTable'
+                  - 'dynamodb:DescribeTable'
+                  - 'dynamodb:PutItem'
+                  - 'dynamodb:GetItem'
+                  - 'dynamodb:Scan'
+                  - 'dynamodb:Query'
+                  - 'dynamodb:UpdateItem'
+                  - 'dynamodb:DeleteItem'
+                Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Environment}-awse2e-messages"
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -135,6 +164,11 @@ Resources:
               Value: "*"  # Keeping as requested for public API access
             - Name: ENVIRONMENT
               Value: !Ref Environment
+            # DynamoDB configuration
+            - Name: USE_DYNAMODB
+              Value: "true"
+            - Name: DYNAMODB_TABLE_NAME
+              Value: !Sub "${Environment}-awse2e-messages"
       Tags:
         - Key: Environment
           Value: !Ref Environment

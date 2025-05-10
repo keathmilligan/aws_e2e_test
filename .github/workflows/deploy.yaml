@@ -84,6 +84,41 @@ jobs:
           capabilities: CAPABILITY_NAMED_IAM
           no-fail-on-empty-changeset: "1"
 
+  # Deploy DynamoDB for message storage
+  deploy-dynamodb:
+    name: Deploy DynamoDB
+    runs-on: ubuntu-latest
+    outputs:
+      TableName: ${{ steps.deploy-dynamodb-stack.outputs.TableName }}
+      TableArn: ${{ steps.deploy-dynamodb-stack.outputs.TableArn }}
+    needs:
+      - deploy-backend-infrastructure
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: ./.github/actions/configure-aws-credentials
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Deploy DynamoDB Stack
+        id: deploy-dynamodb-stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: DynamoDBStack
+          template: iac/dynamodb.yaml
+          parameter-overrides: >-
+            Environment=${{ env.ENVIRONMENT }},
+            TableName=awse2e-messages
+          capabilities: CAPABILITY_NAMED_IAM
+          no-fail-on-empty-changeset: "1"
+
   # Deploy API service (ECS Task/Service, ALB)
   deploy-api-service:
     name: Deploy API Service
@@ -94,6 +129,7 @@ jobs:
       ServiceName: ${{ steps.deploy-api-service.outputs.ServiceName }}
     needs:
       - deploy-backend-infrastructure
+      - deploy-dynamodb
 
     steps:
       - name: Checkout code

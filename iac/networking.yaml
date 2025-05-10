@@ -246,8 +246,8 @@ Resources:
               - 's3:PutObject'
               - 's3:ListBucket'
             Resource:
-              - !Sub "arn:aws:s3:::${Environment}-*"
-              - !Sub "arn:aws:s3:::${Environment}-*/*"
+              - !Sub "arn:aws:s3:::*"
+              - !Sub "arn:aws:s3:::*/*"
             
   # ECR API VPC Endpoint
   EcrApiVpcEndpoint:
@@ -309,21 +309,6 @@ Resources:
       SecurityGroupIds:
         - !Ref VpcEndpointSecurityGroup
         
-  # ECR Authorization Token VPC Endpoint
-  EcrAuthVpcEndpoint:
-    Type: AWS::EC2::VPCEndpoint
-    Condition: CreateVpcEndpoints
-    Properties:
-      ServiceName: !Sub "com.amazonaws.${AWS::Region}.ecr.token"
-      VpcId: !Ref VPC
-      VpcEndpointType: Interface
-      PrivateDnsEnabled: true
-      SubnetIds:
-        - !Ref PrivateSubnet1
-        - !Ref PrivateSubnet2
-      SecurityGroupIds:
-        - !Ref VpcEndpointSecurityGroup
-        
   # SSM VPC Endpoint
   SSMVpcEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -338,7 +323,7 @@ Resources:
         - !Ref PrivateSubnet2
       SecurityGroupIds:
         - !Ref VpcEndpointSecurityGroup
-
+        
 Outputs:
   VpcId:
     Description: VPC ID

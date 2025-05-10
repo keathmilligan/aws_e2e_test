@@ -12,6 +12,13 @@ func main() {
 	// Get configuration from environment variables
 	cfg := config.New()
 
+	// Log storage configuration
+	if cfg.UseDynamoDB {
+		log.Printf("Storage configuration: DynamoDB (table: %s)", cfg.DynamoDBTableName)
+	} else {
+		log.Printf("Storage configuration: In-memory (local development mode)")
+	}
+
 	// Initialize the API server
 	server := api.NewServer(cfg)
 

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/awse2e/backend/internal/config"
@@ -10,19 +11,43 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// MessageStore is an interface for message storage
+type MessageStore interface {
+	GetAll() []*model.Message
+	Add(message *model.Message)
+}
+
 // Server represents the API server
 type Server struct {
 	router       *gin.Engine
 	config       *config.Config
-	messageStore *store.MessageStore
+	messageStore MessageStore
 }
 
 // NewServer creates a new API server
 func NewServer(cfg *config.Config) *Server {
+	var messageStore MessageStore
+	var err error
+
+	// Initialize the appropriate message store based on configuration
+	if cfg.UseDynamoDB {
+		log.Println("STORAGE: Using DynamoDB message store for distributed persistence")
+		messageStore, err = store.NewDynamoDBMessageStore(cfg.DynamoDBTableName)
+		if err != nil {
+			log.Printf("ERROR: Failed to create DynamoDB message store: %v", err)
+			log.Println("STORAGE: Falling back to in-memory message store (WARNING: not suitable for multiple instances)")
+			messageStore = store.NewMessageStore()
+		}
+	} else {
+		log.Println("STORAGE: Using in-memory message store (suitable for local development only)")
+		log.Println("STORAGE: Set USE_DYNAMODB=true for production/multi-instance deployments")
+		messageStore = store.NewMessageStore()
+	}
+
 	server := &Server{
 		router:       gin.Default(),
 		config:       cfg,
-		messageStore: store.NewMessageStore(),
+		messageStore: messageStore,
 	}
 
 	// Configure CORS
