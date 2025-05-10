@@ -18,6 +18,8 @@ Resources:
       RepositoryName: !Sub "${Environment}-${RepositoryName}"
       ImageScanningConfiguration:
         ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: KMS
       LifecyclePolicy:
         LifecyclePolicyText: |
           {

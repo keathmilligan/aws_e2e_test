@@ -7,37 +7,255 @@ jobs:
   # Deploy backend infrastructure (Logging, Networking, ECS Cluster)
   deploy-backend-infrastructure:
     name: Deploy Backend Infrastructure
-    uses: ./.github/workflows/deploy-backend-infrastructure.yaml
+    runs-on: ubuntu-latest
+    outputs:
+      LogGroupArn: ${{ steps.deploy-logging-stack.outputs.LogGroupArn }}
+      LogGroupName: ${{ steps.deploy-logging-stack.outputs.LogGroupName }}
+      VpcId: ${{ steps.deploy-network-stack.outputs.VpcId }}
+      PublicSubnet1: ${{ steps.deploy-network-stack.outputs.PublicSubnet1 }}
+      PublicSubnet2: ${{ steps.deploy-network-stack.outputs.PublicSubnet2 }}
+      PrivateSubnet1: ${{ steps.deploy-network-stack.outputs.PrivateSubnet1 }}
+      PrivateSubnet2: ${{ steps.deploy-network-stack.outputs.PrivateSubnet2 }}
+      ECSClusterName: ${{ steps.deploy-ecs-stack.outputs.ClusterName }}
+      LoadBalancerArn: ${{ steps.deploy-alb-stack.outputs.LoadBalancerArn }}
+      LoadBalancerDnsName: ${{ steps.deploy-alb-stack.outputs.LoadBalancerDnsName }}
+      TargetGroupArn: ${{ steps.deploy-alb-stack.outputs.TargetGroupArn }}
+      ALBSecurityGroupId: ${{ steps.deploy-alb-stack.outputs.ALBSecurityGroupId }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: ./.github/actions/configure-aws-credentials
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Deploy Logging Stack
+        id: deploy-logging-stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: LoggingStack
+          template: iac/logging.yaml
+          parameter-overrides: >-
+            Environment=${{ env.ENVIRONMENT }}
+          capabilities: CAPABILITY_NAMED_IAM
+          no-fail-on-empty-changeset: "1"
+
+      - name: Deploy Networking Stack
+        id: deploy-network-stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: NetworkStack
+          template: iac/networking.yaml
+          parameter-overrides: >-
+            Environment=${{ env.ENVIRONMENT }}
+          capabilities: CAPABILITY_NAMED_IAM
+          no-fail-on-empty-changeset: "1"
+
+      - name: Deploy ECS Stack
+        id: deploy-ecs-stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ECSStack
+          template: iac/ecs.yaml
+          parameter-overrides: >-
+            Environment=${{ env.ENVIRONMENT }}
+          capabilities: CAPABILITY_NAMED_IAM
+          no-fail-on-empty-changeset: "1"
+
+      - name: Deploy ALB Stack
+        id: deploy-alb-stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ALBStack
+          template: iac/alb.yaml
+          parameter-overrides: >-
+            Environment=${{ env.ENVIRONMENT }},
+            VpcId=${{ steps.deploy-network-stack.outputs.VpcId }},
+            PublicSubnet1=${{ steps.deploy-network-stack.outputs.PublicSubnet1 }},
+            PublicSubnet2=${{ steps.deploy-network-stack.outputs.PublicSubnet2 }},
+            CertificateArn=${{ vars.ACM_CERTIFICATE_ARN }},
+            HttpsListenerPort=${{ env.HTTPS_LISTENER_PORT || '443' }}
+          capabilities: CAPABILITY_NAMED_IAM
+          no-fail-on-empty-changeset: "1"
 
   # Deploy API service (ECS Task/Service, ALB)
   deploy-api-service:
     name: Deploy API Service
-    uses: ./.github/workflows/deploy-api-service.yaml
-    needs: deploy-backend-infrastructure
-    with:
-      ECSClusterName: ${{ needs.deploy-backend-infrastructure.outputs.ClusterName }}
-      TargetGroupArn: ${{ needs.deploy-backend-infrastructure.outputs.TargetGroupArn }}
-      LogGroupArn: ${{ needs.deploy-backend-infrastructure.outputs.LogGroupArn }}
-      VpcId: ${{ needs.deploy-backend-infrastructure.outputs.VpcId }}
-      PublicSubnet1: ${{ needs.deploy-backend-infrastructure.outputs.PublicSubnet1 }}
-      PublicSubnet2: ${{ needs.deploy-backend-infrastructure.outputs.PublicSubnet2 }}
+    runs-on: ubuntu-latest
+    outputs:
+      RepositoryUri: ${{ steps.deploy-ecr-stack.outputs.RepositoryUri }}
+      TaskDefinitionArn: ${{ steps.deploy-api-task.outputs.TaskDefinitionArn }}
+      ServiceName: ${{ steps.deploy-api-service.outputs.ServiceName }}
+    needs:
+      - deploy-backend-infrastructure
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: ./.github/actions/configure-aws-credentials
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Deploy ECR Stack
+        id: deploy-ecr-stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ECRStack
+          template: iac/ecr.yaml
+          parameter-overrides: >-
+            Environment=${{ env.ENVIRONMENT }},
+            RepositoryName=awse2e-api
+          capabilities: CAPABILITY_NAMED_IAM
+          no-fail-on-empty-changeset: "1"
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./api
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ steps.deploy-ecr-stack.outputs.RepositoryUri }}:latest
+            ${{ steps.deploy-ecr-stack.outputs.RepositoryUri }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.repository.updated_at }}
+
+      - name: Deploy API Task Definition
+        id: deploy-api-task
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: APITaskStack
+          template: iac/ecs-task.yaml
+          parameter-overrides: >-
+            Environment=${{ env.ENVIRONMENT }},
+            EcrRepositoryUri=${{ steps.deploy-ecr-stack.outputs.RepositoryUri }}:${{ github.sha }},
+            ContainerName=awse2e-api,
+            ContainerPort=${{ env.API_CONTAINER_PORT || '8080' }},
+            LogGroupName=${{ needs.deploy-backend-infrastructure.outputs.LogGroupName }}
+          capabilities: CAPABILITY_NAMED_IAM
+          no-fail-on-empty-changeset: "1"
+
+      - name: Deploy API Service Stack
+        id: deploy-api-service
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: APIServicestack
+          template: iac/ecs-service.yaml
+          parameter-overrides: >-
+            Environment=${{ env.ENVIRONMENT }},
+            ServiceName=awse2e-api-service,
+            ECSClusterName=${{ needs.deploy-backend-infrastructure.outputs.ECSClusterName }},
+            TargetGroupArn=${{ needs.deploy-backend-infrastructure.outputs.TargetGroupArn }},
+            TaskDefinitionArn=${{ steps.deploy-api-task.outputs.TaskDefinitionArn }},
+            VpcId=${{ needs.deploy-backend-infrastructure.outputs.VpcId }},
+            PrivateSubnet1=${{ needs.deploy-backend-infrastructure.outputs.PrivateSubnet1 }},
+            PrivateSubnet2=${{ needs.deploy-backend-infrastructure.outputs.PrivateSubnet2 }},
+            ALBSecurityGroupId=${{ needs.deploy-backend-infrastructure.outputs.ALBSecurityGroupId }},
+            ContainerName=awse2e-api,
+            ContainerPort=${{ env.API_CONTAINER_PORT || '8080' }}
+          capabilities: CAPABILITY_NAMED_IAM
+          no-fail-on-empty-changeset: "1"
 
   # Deploy other microservices...
 
   # Deploy frontend infrastructure (S3, CloudFront)
   deploy-frontend-infrastructure:
     name: Deploy Frontend Infrastructure
-    uses: ./.github/workflows/deploy-frontend-infrastructure.yaml
-    needs: deploy-backend-infrastructure
-    with:
-      LoadBalancerDnsName: ${{ needs.deploy-api-service.outputs.LoadBalancerDnsName }}
+    runs-on: ubuntu-latest
+    outputs:
+      BucketName: ${{ steps.deploy-cloudfront-stack.outputs.BucketName }}
+      CloudFrontDistributionId: ${{ steps.deploy-cloudfront-stack.outputs.CloudFrontDistributionId }}
+    needs:
+      - deploy-backend-infrastructure
+      - deploy-api-service
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: ./.github/actions/configure-aws-credentials
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Deploy CloudFront Stack
+        id: deploy-cloudfront-stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: CloudFrontStack
+          template: iac/cloudfront.yaml
+          parameter-overrides: >-
+            Environment=${{ env.ENVIRONMENT }},
+            DomainName=${{ env.DOMAIN_NAME || format('{0}.example.com', env.ENVIRONMENT) }},
+            CertificateArn=${{ vars.ACM_CERTIFICATE_ARN }},
+            LoadBalancerDNSName=${{ needs.deploy-backend-infrastructure.outputs.LoadBalancerDnsName }},
+          capabilities: CAPABILITY_NAMED_IAM
+          no-fail-on-empty-changeset: "1"
 
   # Deploy frontend
   deploy-frontend:
     name: Deploy Frontend
-    uses: ./.github/workflows/deploy-frontend.yaml
+    runs-on: ubuntu-latest
     needs: deploy-frontend-infrastructure
-    with:
-      LoadBalancerDnsName: ${{ needs.deploy-api-service.outputs.LoadBalancerDnsName }}
-      BucketName: ${{ needs.deploy-frontend-infrastructure.outputs.BucketName }}
-      CloudFrontDistributionId: ${{ needs.deploy-frontend-infrastructure.outputs.CloudFrontDistributionId }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: ./.github/actions/configure-aws-credentials
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend application
+        run: |
+          cd frontend
+          npm install
+          REACT_APP_API_URL=https://${{ needs.deploy-backend-infrastructure.outputs.LoadBalancerDnsName }} npm run build
+
+      - name: Deploy Frontend to S3
+        uses: reggionick/s3-deploy@v4
+        with:
+          bucket: ${{ needs.deploy-frontend-infrastructure.outputs.BucketName }}
+          bucket-region: ${{ env.AWS_REGION }}
+          folder: 'frontend/dist'
+          delete-removed: true
+          dist-id: ${{ needs.deploy-frontend-infrastructure.outputs.CloudFrontDistributionId }}
+          private: true
+          invalidation: /

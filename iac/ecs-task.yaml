@@ -41,12 +41,12 @@ Parameters:
     Default: awse2e-ecs-sg
     Description: Tag for the ECS security group
 
-  LogGroupArn:
+  LogGroupName:
     Type: String
-    Description: ARN of the CloudWatch Log Group
+    Description: CloudWatch Log Group name
 
 Resources:
-  # ECS Task Execution Role
+  # ECS Task Execution Role - for pulling images and writing logs
   ECSTaskExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -62,6 +62,45 @@ Resources:
       Tags:
         - Key: Environment
           Value: !Ref Environment
+        - Key: Name
+          Value: !Sub "${Environment}-ecs-execution-role"
+        - Key: Application
+          Value: "awse2e"
+        - Key: ManagedBy
+          Value: "CloudFormation"
+          
+  # ECS Task Role - for application permissions
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      # Add only the permissions your application needs
+      Policies:
+        - PolicyName: !Sub "${Environment}-task-policy"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Example permissions - adjust based on your application needs
+              - Effect: Allow
+                Action:
+                  - 'ssm:GetParameters'
+                  - 'ssm:GetParameter'
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${Environment}/awse2e/*"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Name
+          Value: !Sub "${Environment}-ecs-task-role"
+        - Key: Application
+          Value: "awse2e"
+        - Key: ManagedBy
+          Value: "CloudFormation"
 
   # ECS Task Definition
   TaskDefinition:
@@ -74,9 +113,10 @@ Resources:
       Cpu: !Ref ContainerCpu
       Memory: !Ref ContainerMemory
       ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
       ContainerDefinitions:
         - Name: !Sub "${Environment}-${ContainerName}"
-          Image: !Sub "${EcrRepositoryUri}"
+          Image: !Ref EcrRepositoryUri
           Essential: true
           PortMappings:
             - ContainerPort: !Ref ContainerPort
@@ -85,17 +125,25 @@ Resources:
           LogConfiguration:
             LogDriver: awslogs
             Options:
-              awslogs-group: !Ref LogGroupArn
+              awslogs-group: !Ref LogGroupName
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: ecs
           Environment:
             - Name: SERVER_ADDRESS
               Value: !Sub ":${ContainerPort}"
             - Name: CORS_ORIGINS
-              Value: "*"
+              Value: "*"  # Keeping as requested for public API access
+            - Name: ENVIRONMENT
+              Value: !Ref Environment
       Tags:
         - Key: Environment
           Value: !Ref Environment
+        - Key: Name
+          Value: !Sub "${Environment}-${TaskFamily}"
+        - Key: Application
+          Value: "awse2e"
+        - Key: ManagedBy
+          Value: "CloudFormation"
 
 Outputs:
   TaskDefinitionArn:

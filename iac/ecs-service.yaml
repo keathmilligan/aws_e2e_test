@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'AWS End-to-End Deployment Example - ECS Task Stack'
+Description: 'AWS End-to-End Deployment Example - ECS Service Stack'
 
 Parameters:
   Environment:
@@ -34,6 +34,26 @@ Parameters:
   TargetGroupArn:
     Type: String
     Description: Target Group ARN for the ECS service
+    
+  VpcId:
+    Type: String
+    Description: VPC ID
+
+  ECSClusterName:
+    Type: String
+    Description: ECS Cluster Name
+
+  PrivateSubnet1:
+    Type: String
+    Description: Private Subnet 1 ID
+
+  PrivateSubnet2:
+    Type: String
+    Description: Private Subnet 2 ID
+    
+  ALBSecurityGroupId:
+    Type: String
+    Description: Security Group ID of the ALB
 
 Resources:
   # Security Group for ECS Tasks
@@ -46,7 +66,7 @@ Resources:
         - IpProtocol: tcp
           FromPort: !Ref ContainerPort
           ToPort: !Ref ContainerPort
-          CidrIp: 0.0.0.0/0
+          SourceSecurityGroupId: !Ref ALBSecurityGroupId
       Tags:
         - Key: Name
           Value: !Sub "${Environment}-${SecurityGroupTag}"
@@ -58,16 +78,16 @@ Resources:
     Type: AWS::ECS::Service
     Properties:
       ServiceName: !Sub "${Environment}-${ServiceName}"
-      Cluster: !Ref ECSCluster
+      Cluster: !Ref ECSClusterName
       TaskDefinition: !Ref TaskDefinitionArn
       DesiredCount: 2
       LaunchType: FARGATE
       NetworkConfiguration:
         AwsvpcConfiguration:
-          AssignPublicIp: ENABLED
+          AssignPublicIp: DISABLED  # Not needed when behind ALB
           Subnets:
-            - !Ref PublicSubnet1
-            - !Ref PublicSubnet2
+            - !Ref PrivateSubnet1
+            - !Ref PrivateSubnet2
           SecurityGroups:
             - !Ref ECSSecurityGroup
       DeploymentConfiguration:
@@ -75,12 +95,17 @@ Resources:
         MaximumPercent: 200
       LoadBalancers:
         - TargetGroupArn: !Ref TargetGroupArn
-          ContainerName: !Ref ContainerName
+          ContainerName: !Sub "${Environment}-${ContainerName}"
           ContainerPort: !Ref ContainerPort
       Tags:
         - Key: Environment
           Value: !Ref Environment
-      ForceNewDeployment: true
+        - Key: Name
+          Value: !Sub "${Environment}-${ServiceName}"
+        - Key: Application
+          Value: "awse2e"
+        - Key: ManagedBy
+          Value: "CloudFormation"
 
 Outputs:
   ServiceName:
