@@ -222,9 +222,6 @@ jobs:
     outputs:
       BucketName: ${{ steps.deploy-cloudfront-stack.outputs.BucketName }}
       CloudFrontDistributionId: ${{ steps.deploy-cloudfront-stack.outputs.CloudFrontDistributionId }}
-    needs:
-      - deploy-backend-infrastructure
-      - deploy-api-service
 
     steps:
       - name: Checkout code
@@ -248,8 +245,7 @@ jobs:
           parameter-overrides: >-
             Environment=${{ env.ENVIRONMENT }},
             DomainName=${{ env.DOMAIN_NAME || format('{0}.example.com', env.ENVIRONMENT) }},
-            CertificateArn=${{ vars.ACM_CERTIFICATE_ARN }},
-            LoadBalancerDNSName=${{ needs.deploy-backend-infrastructure.outputs.LoadBalancerDnsName }},
+            CertificateArn=${{ vars.ACM_CERTIFICATE_ARN }}
           capabilities: CAPABILITY_NAMED_IAM
           no-fail-on-empty-changeset: "1"
 
@@ -283,14 +279,14 @@ jobs:
         run: |
           cd frontend
           npm install
-          REACT_APP_API_URL=https://${{ needs.deploy-backend-infrastructure.outputs.LoadBalancerDnsName }} npm run build
+          REACT_APP_API_URL=https://${{ env.API_DOMAIN_NAME }} npm run build
 
       - name: Deploy Frontend to S3
         uses: reggionick/s3-deploy@v4
         with:
           bucket: ${{ needs.deploy-frontend-infrastructure.outputs.BucketName }}
           bucket-region: ${{ env.AWS_REGION }}
-          folder: 'frontend/dist'
+          folder: 'frontend/build'
           delete-removed: true
           dist-id: ${{ needs.deploy-frontend-infrastructure.outputs.CloudFrontDistributionId }}
           private: true
