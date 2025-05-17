@@ -1,21 +1,24 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'AWS End-to-End Deployment Example - ECR Stack'
+Description: 'AWS Deployment - ECR Stack'
 
 Parameters:
+  ApplicationName:
+    Type: String
+    Description: Name of the application
+
   Environment:
     Type: String
-    Default: dev
     Description: Environment name (dev, staging, prod)
-  
-  RepositoryName:
+
+  ServiceName:
     Type: String
-    Description: Name of the ECR repository
+    Description: Name of the service
 
 Resources:
   BackendRepository:
     Type: AWS::ECR::Repository
     Properties:
-      RepositoryName: !Sub "${Environment}-${RepositoryName}"
+      RepositoryName: !Sub "${ApplicationName}-${Environment}-${ServiceName}-repo"
       ImageScanningConfiguration:
         ScanOnPush: true
       EncryptionConfiguration:
@@ -41,6 +44,12 @@ Resources:
       Tags:
         - Key: Environment
           Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Service
+          Value: !Ref ServiceName
+        - Key: ManagedBy
+          Value: "CloudFormation"
 
 Outputs:
   RepositoryUri:

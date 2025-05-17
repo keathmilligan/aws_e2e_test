@@ -18,7 +18,7 @@ func New() *Config {
 		ServerAddress:     getEnv("SERVER_ADDRESS", ":8080"),
 		CorsOrigins:       getEnv("CORS_ORIGINS", "*"),
 		UseDynamoDB:       getEnvBool("USE_DYNAMODB", false),
-		DynamoDBTableName: getEnv("DYNAMODB_TABLE_NAME", "awse2e-messages"),
+		DynamoDBTableName: getEnv("DYNAMODB_TABLE_NAME", "messages"),
 	}
 }
 

@@ -1,10 +1,13 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'AWS End-to-End Deployment Example - Network Stack'
+Description: 'AWS Deployment - Network Stack'
 
 Parameters:
+  ApplicationName:
+    Type: String
+    Description: Name of the application
+
   Environment:
     Type: String
-    Default: dev
     Description: Environment name (dev, staging, prod)
     
   CreateVpcEndpoints:
@@ -25,16 +28,24 @@ Resources:
       EnableDnsSupport: true
       EnableDnsHostnames: true
       Tags:
-        - Key: Name
-          Value: !Sub "${Environment}-vpc"
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: ManagedBy
+          Value: "CloudFormation"
 
   # Internet Gateway
   InternetGateway:
     Type: AWS::EC2::InternetGateway
     Properties:
       Tags:
-        - Key: Name
-          Value: !Sub "${Environment}-igw"
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: ManagedBy
+          Value: "CloudFormation"
 
   # Attach Internet Gateway to VPC
   VPCGatewayAttachment:
@@ -52,8 +63,12 @@ Resources:
       AvailabilityZone: !Select [0, !GetAZs '']
       MapPublicIpOnLaunch: true
       Tags:
-        - Key: Name
-          Value: !Sub "${Environment}-public-subnet-1"
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: ManagedBy
+          Value: "CloudFormation"
 
   # Public Subnet 2
   PublicSubnet2:
@@ -64,8 +79,12 @@ Resources:
       AvailabilityZone: !Select [1, !GetAZs '']
       MapPublicIpOnLaunch: true
       Tags:
-        - Key: Name
-          Value: !Sub "${Environment}-public-subnet-2"
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: ManagedBy
+          Value: "CloudFormation"
           
   # Private Subnet 1
   PrivateSubnet1:
@@ -76,12 +95,10 @@ Resources:
       AvailabilityZone: !Select [0, !GetAZs '']
       MapPublicIpOnLaunch: false
       Tags:
-        - Key: Name
-          Value: !Sub "${Environment}-private-subnet-1"
         - Key: Environment
           Value: !Ref Environment
         - Key: Application
-          Value: "awse2e"
+          Value: !Ref ApplicationName
         - Key: ManagedBy
           Value: "CloudFormation"
 
@@ -94,12 +111,10 @@ Resources:
       AvailabilityZone: !Select [1, !GetAZs '']
       MapPublicIpOnLaunch: false
       Tags:
-        - Key: Name
-          Value: !Sub "${Environment}-private-subnet-2"
         - Key: Environment
           Value: !Ref Environment
         - Key: Application
-          Value: "awse2e"
+          Value: !Ref ApplicationName
         - Key: ManagedBy
           Value: "CloudFormation"
           
@@ -110,12 +125,10 @@ Resources:
     Properties:
       Domain: vpc
       Tags:
-        - Key: Name
-          Value: !Sub "${Environment}-nat-eip"
         - Key: Environment
           Value: !Ref Environment
         - Key: Application
-          Value: "awse2e"
+          Value: !Ref ApplicationName
         - Key: ManagedBy
           Value: "CloudFormation"
           
@@ -126,12 +139,10 @@ Resources:
       AllocationId: !GetAtt NatGatewayEIP.AllocationId
       SubnetId: !Ref PublicSubnet1
       Tags:
-        - Key: Name
-          Value: !Sub "${Environment}-nat-gateway"
         - Key: Environment
           Value: !Ref Environment
         - Key: Application
-          Value: "awse2e"
+          Value: !Ref ApplicationName
         - Key: ManagedBy
           Value: "CloudFormation"
           
@@ -141,12 +152,10 @@ Resources:
     Properties:
       VpcId: !Ref VPC
       Tags:
-        - Key: Name
-          Value: !Sub "${Environment}-private-route-table"
         - Key: Environment
           Value: !Ref Environment
         - Key: Application
-          Value: "awse2e"
+          Value: !Ref ApplicationName
         - Key: ManagedBy
           Value: "CloudFormation"
           
@@ -178,8 +187,12 @@ Resources:
     Properties:
       VpcId: !Ref VPC
       Tags:
-        - Key: Name
-          Value: !Sub "${Environment}-public-route-table"
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: ManagedBy
+          Value: "CloudFormation"
 
   # Public Route
   PublicRoute:
@@ -217,12 +230,10 @@ Resources:
           ToPort: 443
           CidrIp: !GetAtt VPC.CidrBlock
       Tags:
-        - Key: Name
-          Value: !Sub "${Environment}-vpc-endpoint-sg"
         - Key: Environment
           Value: !Ref Environment
         - Key: Application
-          Value: "awse2e"
+          Value: !Ref ApplicationName
         - Key: ManagedBy
           Value: "CloudFormation"
           

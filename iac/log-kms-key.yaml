@@ -1,36 +1,16 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'AWS End-to-End Deployment Example - Logging Stack'
+Description: 'AWS Deployment - Logging Encyrption Key Stack'
 
 Parameters:
+  ApplicationName:
+    Type: String
+    Description: Name of the application
+
   Environment:
     Type: String
-    Default: dev
     Description: Environment name (dev, staging, prod)
-    
-  RetentionInDays:
-    Type: Number
-    Default: 30
-    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653]
-    Description: Number of days to retain logs
 
 Resources:
-  # CloudWatch Log Group
-  LogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/ecs/${Environment}-awse2e"
-      RetentionInDays: !Ref RetentionInDays
-      KmsKeyId: !GetAtt LoggingKmsKey.Arn
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
-        - Key: Name
-          Value: !Sub "${Environment}-awse2e-logs"
-        - Key: Application
-          Value: "awse2e"
-        - Key: ManagedBy
-          Value: "CloudFormation"
-          
   # KMS Key for Log Encryption
   LoggingKmsKey:
     Type: AWS::KMS::Key
@@ -62,7 +42,7 @@ Resources:
           - Sid: Allow CloudWatch Logs
             Effect: Allow
             Principal:
-              Service: logs.amazonaws.com
+              Service: logs.us-east-1.amazonaws.com
             Action:
               - kms:Encrypt*
               - kms:Decrypt*
@@ -70,16 +50,11 @@ Resources:
               - kms:GenerateDataKey*
               - kms:Describe*
             Resource: '*'
-            Condition:
-              ArnEquals:
-                kms:EncryptionContext:aws:logs:arn: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/${Environment}-awse2e"
       Tags:
         - Key: Environment
           Value: !Ref Environment
-        - Key: Name
-          Value: !Sub "${Environment}-awse2e-logs-key"
         - Key: Application
-          Value: "awse2e"
+          Value: !Ref ApplicationName
         - Key: ManagedBy
           Value: "CloudFormation"
           
@@ -87,22 +62,10 @@ Resources:
   LoggingKmsKeyAlias:
     Type: AWS::KMS::Alias
     Properties:
-      AliasName: !Sub "alias/${Environment}-awse2e-logs-key"
+      AliasName: !Sub "alias/${ApplicationName}-${Environment}-logs-key"
       TargetKeyId: !Ref LoggingKmsKey
 
 Outputs:
-  LogGroupArn:
-    Description: CloudWatch Log Group ARN
-    Value: !GetAtt LogGroup.Arn
-    Export:
-      Name: !Sub "${AWS::StackName}-LogGroupArn"
-
-  LogGroupName:
-    Description: CloudWatch Log Group Name
-    Value: !Ref LogGroup
-    Export:
-      Name: !Sub "${AWS::StackName}-LogGroupName"
-
   LoggingKmsKeyArn:
     Description: KMS Key ARN for Logging
     Value: !GetAtt LoggingKmsKey.Arn

@@ -4,8 +4,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/awse2e/backend/internal/api"
-	"github.com/awse2e/backend/internal/config"
+	"github.com/aws_e2e_test/msgsvc/internal/config"
+	"github.com/aws_e2e_test/msgsvc/internal/msgsvc"
 )
 
 func main() {
@@ -20,7 +20,7 @@ func main() {
 	}
 
 	// Initialize the API server
-	server := api.NewServer(cfg)
+	server := msgsvc.NewServer(cfg)
 
 	// Start the server
 	log.Printf("Starting server on %s", cfg.ServerAddress)

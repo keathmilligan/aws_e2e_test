@@ -1,0 +1,370 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Deployment - msgsvc ECS Stack'
+
+Parameters:
+  ApplicationName:
+    Type: String
+    Description: Name of the application
+
+  Environment:
+    Type: String
+    Description: Environment name (dev, staging, prod)
+
+  ServiceName:
+    Type: String
+    Default: msgsvc
+    Description: Name of the service
+
+  EcrRepositoryUri:
+    Type: String
+    Description: ECR Repository URI
+    
+  DeploymentTimestamp:
+    Type: String
+    Default: "0"
+    Description: Timestamp for forcing new deployments
+
+  ContainerCpu:
+    Type: String
+    Default: 256
+    Description: CPU units for the container (e.g., 256, 512, 1024)
+
+  ContainerMemory:
+    Type: String
+    Default: 512
+    Description: Memory in MiB for the container (e.g., 512, 1024, 2048)
+
+  ContainerPort:
+    Type: Number
+    Default: 8080
+    Description: Container port
+
+  LoggingKMSKeyArn:
+    Type: String
+    Description: ARN of the KMS key for encrypting logs
+  
+  TaskExecutionRoleArn:
+    Type: String
+    Description: ARN of the ECS Task Execution Role
+
+  VpcId:
+    Type: String
+    Description: VPC ID
+
+  ECSClusterName:
+    Type: String
+    Description: ECS Cluster Name
+
+  PublicSubnet1:
+    Type: String
+    Description: Public Subnet 1 ID
+
+  PublicSubnet2:
+    Type: String
+    Description: Public Subnet 2 ID
+    
+  PrivateSubnet1:
+    Type: String
+    Description: Private Subnet 1 ID
+
+  PrivateSubnet2:
+    Type: String
+    Description: Private Subnet 2 ID
+    
+  HealthCheckPath:
+    Type: String
+    Default: /health
+    Description: Health check path
+
+  ListenerPort:
+    Type: Number
+    Default: 80
+    Description: ALB listener port
+    
+  HttpsListenerPort:
+    Type: Number
+    Default: 443
+    Description: ALB HTTPS listener port
+
+  CertificateArn:
+    Type: String
+    Description: ARN of the ACM certificate for HTTPS
+
+Resources:
+  # CloudWatch Log Group
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${ApplicationName}-${Environment}-${ServiceName}"
+      RetentionInDays: 30
+      KmsKeyId: !Ref LoggingKMSKeyArn
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Service
+          Value: !Ref ServiceName
+        - Key: ManagedBy
+          Value: "CloudFormation"
+
+  # ALB Security Group
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ALB
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref ListenerPort
+          ToPort: !Ref ListenerPort
+          CidrIp: 0.0.0.0/0
+          Description: "Allow HTTP access from anywhere (required for public API access)"
+        - IpProtocol: tcp
+          FromPort: !Ref HttpsListenerPort
+          ToPort: !Ref HttpsListenerPort
+          CidrIp: 0.0.0.0/0
+          Description: "Allow HTTPS access from anywhere (required for public API access)"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Service
+          Value: !Ref ServiceName
+        - Key: ManagedBy
+          Value: "CloudFormation"
+
+  # Application Load Balancer
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${ApplicationName}-${Environment}-${ServiceName}-load-balancer"
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '60'
+        - Key: routing.http.drop_invalid_header_fields.enabled
+          Value: 'true'
+        - Key: deletion_protection.enabled
+          Value: 'false'
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Service
+          Value: !Ref ServiceName
+        - Key: ManagedBy
+          Value: "CloudFormation"
+
+  # Target Group
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${ApplicationName}-${Environment}-${ServiceName}-target-group"
+      VpcId: !Ref VpcId
+      Port: 8080
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckPath: !Ref HealthCheckPath
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      UnhealthyThresholdCount: 3
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Service
+          Value: !Ref ServiceName
+        - Key: ManagedBy
+          Value: "CloudFormation"
+
+  # HTTP Listener - redirects to HTTPS
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: !Ref ListenerPort
+      Protocol: HTTP
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig:
+            Protocol: HTTPS
+            Port: !Ref HttpsListenerPort
+            StatusCode: HTTP_301
+            
+  # HTTPS Listener
+  HttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: !Ref HttpsListenerPort
+      Protocol: HTTPS
+      SslPolicy: ELBSecurityPolicy-TLS-1-2-2017-01
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  # ECS Task Role - for application permissions
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      # Add only the permissions your application needs
+      Policies:
+        - PolicyName: !Sub "${ApplicationName}-${Environment}-${ServiceName}-task-policy"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # DynamoDB permissions
+              - Effect: Allow
+                Action:
+                  - 'dynamodb:CreateTable'
+                  - 'dynamodb:DescribeTable'
+                  - 'dynamodb:PutItem'
+                  - 'dynamodb:GetItem'
+                  - 'dynamodb:Scan'
+                  - 'dynamodb:Query'
+                  - 'dynamodb:UpdateItem'
+                  - 'dynamodb:DeleteItem'
+                Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ApplicationName}-${Environment}-${ServiceName}-messages"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Service
+          Value: !Ref ServiceName
+        - Key: ManagedBy
+          Value: "CloudFormation"
+
+  # ECS Task Definition
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${ApplicationName}-${Environment}-task-family"
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: !Ref ContainerCpu
+      Memory: !Ref ContainerMemory
+      ExecutionRoleArn: !Ref TaskExecutionRoleArn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: !Sub "${ApplicationName}-${Environment}-${ServiceName}-container"
+          Image: !Ref EcrRepositoryUri
+          Essential: true
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+              HostPort: !Ref ContainerPort
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          Environment:
+            - Name: SERVER_ADDRESS
+              Value: !Sub ":${ContainerPort}"
+            - Name: CORS_ORIGINS
+              Value: "*"  # Keeping as requested for public API access
+            - Name: ENVIRONMENT
+              Value: !Ref Environment
+            # DynamoDB configuration
+            - Name: USE_DYNAMODB
+              Value: "true"
+            - Name: DYNAMODB_TABLE_NAME
+              Value: !Sub "${ApplicationName}-${Environment}-${ServiceName}-messages"
+            # Deployment timestamp to force task definition updates
+            - Name: DEPLOYMENT_TIMESTAMP
+              Value: !Ref DeploymentTimestamp
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Service
+          Value: !Ref ServiceName
+        - Key: ManagedBy
+          Value: "CloudFormation"
+
+  # Security Group for ECS Tasks
+  ECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ECS tasks
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref ContainerPort
+          ToPort: !Ref ContainerPort
+          SourceSecurityGroupId: !GetAtt ALBSecurityGroup.GroupId
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Service
+          Value: !Ref ServiceName
+        - Key: ManagedBy
+          Value: "CloudFormation"
+
+  # ECS Service
+  ECSService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - HttpsListener
+    Properties:
+      ServiceName: !Ref ServiceName
+      Cluster: !Ref ECSClusterName
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: 2
+      LaunchType: FARGATE
+      # Enable deployment circuit breaker for safer deployments
+      DeploymentController:
+        Type: ECS
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED  # Not needed when behind ALB
+          Subnets:
+            - !Ref PrivateSubnet1
+            - !Ref PrivateSubnet2
+          SecurityGroups:
+            - !Ref ECSSecurityGroup
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 100
+        MaximumPercent: 200
+        # Enable deployment circuit breaker for safer deployments
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      LoadBalancers:
+        - TargetGroupArn: !Ref TargetGroup
+          ContainerName: !Sub "${ApplicationName}-${Environment}-${ServiceName}-container"
+          ContainerPort: !Ref ContainerPort
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Service
+          Value: !Ref ServiceName
+        - Key: ManagedBy
+          Value: "CloudFormation"

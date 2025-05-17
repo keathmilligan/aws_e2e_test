@@ -1,23 +1,21 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'AWS End-to-End Deployment Example - ECS Stack'
+Description: 'AWS Deployment - ECS Cluster'
 
 Parameters:
+  ApplicationName:
+    Type: String
+    Description: Name of the application
+
   Environment:
     Type: String
-    Default: dev
     Description: Environment name (dev, staging, prod)
-
-  ClusterName:
-    Type: String
-    Default: awse2e-cluster
-    Description: Name of the ECS Cluster
 
 Resources:
   # ECS Cluster
   ECSCluster:
     Type: AWS::ECS::Cluster
     Properties:
-      ClusterName: !Sub "${Environment}-${ClusterName}"
+      ClusterName: !Sub "${Environment}-${ApplicationName}-cluster"
       CapacityProviders:
         - FARGATE
         - FARGATE_SPOT
@@ -27,6 +25,10 @@ Resources:
       Tags:
         - Key: Environment
           Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: ManagedBy
+          Value: "CloudFormation"
 
 Outputs:
   ClusterName:

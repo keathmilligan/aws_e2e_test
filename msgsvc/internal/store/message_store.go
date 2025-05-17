@@ -3,7 +3,7 @@ package store
 import (
 	"sync"
 
-	"github.com/awse2e/backend/internal/model"
+	"github.com/aws_e2e_test/msgsvc/internal/model"
 )
 
 // MessageStore is an in-memory store for messages
@@ -20,20 +20,21 @@ func NewMessageStore() *MessageStore {
 }
 
 // GetAll returns all messages
-func (s *MessageStore) GetAll() []*model.Message {
+func (s *MessageStore) GetAll() ([]*model.Message, error) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
 	// Return a copy of the messages to avoid race conditions
 	result := make([]*model.Message, len(s.messages))
 	copy(result, s.messages)
-	return result
+	return result, nil
 }
 
 // Add adds a new message to the store
-func (s *MessageStore) Add(message *model.Message) {
+func (s *MessageStore) Add(message *model.Message) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
 	s.messages = append(s.messages, message)
+	return nil
 }

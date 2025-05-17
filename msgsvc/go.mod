@@ -1,4 +1,4 @@
-module github.com/awse2e/backend
+module github.com/aws_e2e_test/msgsvc
 
 go 1.22
 

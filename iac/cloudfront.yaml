@@ -1,11 +1,18 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'AWS End-to-End Deployment Example - Frontend Stack'
+Description: 'AWS Deployment - Frontend Stack'
 
 Parameters:
+  ApplicationName:
+    Type: String
+    Description: Name of the application
+
   Environment:
     Type: String
-    Default: dev
     Description: Environment name (dev, staging, prod)
+
+  DistributionName:
+    Type: String
+    Description: Name of the CloudFront distribution
 
   DomainName:
     Type: String
@@ -14,47 +21,13 @@ Parameters:
   CertificateArn:
     Type: String
     Description: ARN of the ACM certificate for the domain
-    
+
 Resources:
-  # S3 Bucket for Frontend
-  FrontendBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub "${Environment}-frontend-${AWS::AccountId}"
-      OwnershipControls:
-        Rules:
-          - ObjectOwnership: BucketOwnerEnforced
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      WebsiteConfiguration:
-        IndexDocument: index.html
-        ErrorDocument: index.html
-      # Add server-side encryption
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      # Add logging configuration
-      LoggingConfiguration:
-        DestinationBucketName: !Ref S3AccessLogsBucket
-        LogFilePrefix: frontend-bucket-logs/
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
-        - Key: Name
-          Value: !Sub "${Environment}-frontend"
-        - Key: Application
-          Value: "awse2e"
-        - Key: ManagedBy
-          Value: "CloudFormation"
-          
   # S3 Bucket for Access Logs
   S3AccessLogsBucket:
     Type: AWS::S3::Bucket
     Properties:
+      BucketName: !Sub "${ApplicationName}-${Environment}-${DistributionName}-logs"
       OwnershipControls:
         Rules:
           - ObjectOwnership: BucketOwnerEnforced
@@ -75,10 +48,10 @@ Resources:
       Tags:
         - Key: Environment
           Value: !Ref Environment
-        - Key: Name
-          Value: !Sub "${Environment}-s3-access-logs"
         - Key: Application
-          Value: "awse2e"
+          Value: !Ref ApplicationName
+        - Key: Distribution
+          Value: !Ref DistributionName
         - Key: ManagedBy
           Value: "CloudFormation"
 
@@ -100,12 +73,61 @@ Resources:
               StringEquals:
                 "aws:SourceAccount": !Ref AWS::AccountId
 
+  # S3 Bucket for Frontend
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    DependsOn: S3AccessLogsBucket
+    Properties:
+      BucketName: !Sub "${ApplicationName}-${Environment}-${DistributionName}"
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      # Add server-side encryption
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      # Add CORS configuration
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - GET
+              - HEAD
+            AllowedOrigins:
+              - '*'
+            MaxAge: 3600
+      
+      # Add logging configuration
+      LoggingConfiguration:
+        DestinationBucketName: !Sub "${ApplicationName}-${Environment}-${DistributionName}-logs"
+        LogFilePrefix: !Sub "${DistributionName}/"
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Distribution
+          Value: !Ref DistributionName
+        - Key: ManagedBy
+          Value: "CloudFormation"
+
   # Bucket Policy for CloudFront Access - Using OAI instead of direct distribution reference
   FrontendBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
       Bucket: !Ref FrontendBucket
       PolicyDocument:
+        Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
@@ -124,14 +146,14 @@ Resources:
   WebACL:
     Type: AWS::WAFv2::WebACL
     Properties:
-      Name: !Sub "${Environment}-awse2e-webacl"
+      Name: !Sub "${ApplicationName}-${Environment}-${DistributionName}-webacl"
       Scope: CLOUDFRONT
       DefaultAction:
         Allow: {}
       VisibilityConfig:
         SampledRequestsEnabled: true
         CloudWatchMetricsEnabled: true
-        MetricName: !Sub "${Environment}-awse2e-webacl"
+        MetricName: !Sub "${ApplicationName}-${Environment}-${DistributionName}-webacl"
       Rules:
         - Name: AWSManagedRulesCommonRuleSet
           Priority: 0
@@ -161,7 +183,9 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
         - Key: Application
-          Value: "awse2e"
+          Value: !Ref ApplicationName
+        - Key: Distribution
+          Value: !Ref DistributionName
         - Key: ManagedBy
           Value: "CloudFormation"
 
@@ -204,9 +228,19 @@ Resources:
           - ErrorCode: 403
             ResponseCode: 200
             ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
           - ErrorCode: 404
             ResponseCode: 200
             ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 500
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 502
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
         Aliases: [!Ref DomainName]
         ViewerCertificate:
           AcmCertificateArn: !Ref CertificateArn
@@ -215,28 +249,28 @@ Resources:
       Tags:
         - Key: Environment
           Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: Distribution
+          Value: !Ref DistributionName
+        - Key: ManagedBy
+          Value: "CloudFormation"
 
 Outputs:
   BucketName:
-    Description: S3 Bucket Name
+    Description: "Name of the S3 bucket hosting the frontend"
     Value: !Ref FrontendBucket
     Export:
       Name: !Sub "${AWS::StackName}-BucketName"
-      
-  WebACLId:
-    Description: WAF Web ACL ID
-    Value: !GetAtt WebACL.Arn
-    Export:
-      Name: !Sub "${AWS::StackName}-WebACLId"
-
-  CloudFrontDomainName:
-    Description: CloudFront Domain Name
-    Value: !GetAtt CloudFrontDistribution.DomainName
-    Export:
-      Name: !Sub "${AWS::StackName}-CloudFrontDomainName"
-
+  
   CloudFrontDistributionId:
-    Description: CloudFront Distribution ID
+    Description: "ID of the CloudFront distribution"
     Value: !Ref CloudFrontDistribution
     Export:
-      Name: !Sub "${AWS::StackName}-CloudFrontDistributionId"
+      Name: !Sub "${AWS::StackName}-DistributionId"
+  
+  CloudFrontDomainName:
+    Description: "Domain name of the CloudFront distribution"
+    Value: !GetAtt CloudFrontDistribution.DomainName
+    Export:
+      Name: !Sub "${AWS::StackName}-DistributionDomainName"

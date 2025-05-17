@@ -12,7 +12,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o api ./cmd/api
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o msgsvc ./cmd/msgsvc
 
 # Use a small alpine image
 FROM alpine:3.21
@@ -23,10 +23,10 @@ RUN apk --no-cache add ca-certificates
 WORKDIR /root/
 
 # Copy the binary from builder
-COPY --from=builder /app/api .
+COPY --from=builder /app/msgsvc .
 
 # Expose the application port
 EXPOSE 8080
 
 # Command to run the executable
-CMD ["./api"]
+CMD ["./msgsvc"]

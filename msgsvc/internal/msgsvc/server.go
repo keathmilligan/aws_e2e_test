@@ -1,20 +1,20 @@
-package api
+package msgsvc
 
 import (
 	"log"
 	"net/http"
 
-	"github.com/awse2e/backend/internal/config"
-	"github.com/awse2e/backend/internal/model"
-	"github.com/awse2e/backend/internal/store"
+	"github.com/aws_e2e_test/msgsvc/internal/config"
+	"github.com/aws_e2e_test/msgsvc/internal/model"
+	"github.com/aws_e2e_test/msgsvc/internal/store"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
 // MessageStore is an interface for message storage
 type MessageStore interface {
-	GetAll() []*model.Message
-	Add(message *model.Message)
+	GetAll() ([]*model.Message, error)
+	Add(message *model.Message) error
 }
 
 // Server represents the API server
@@ -31,11 +31,11 @@ func NewServer(cfg *config.Config) *Server {
 
 	// Initialize the appropriate message store based on configuration
 	if cfg.UseDynamoDB {
-		log.Println("STORAGE: Using DynamoDB message store for distributed persistence")
 		messageStore, err = store.NewDynamoDBMessageStore(cfg.DynamoDBTableName)
 		if err != nil {
 			log.Printf("ERROR: Failed to create DynamoDB message store: %v", err)
-			log.Println("STORAGE: Falling back to in-memory message store (WARNING: not suitable for multiple instances)")
+			log.Printf("ERROR: Stack trace: %+v", err)
+			log.Printf("CRITICAL: Falling back to in-memory message store (WARNING: not suitable for multiple instances)")
 			messageStore = store.NewMessageStore()
 		}
 	} else {
@@ -88,23 +88,58 @@ func (s *Server) registerRoutes() {
 
 // getMessages returns all messages
 func (s *Server) getMessages(c *gin.Context) {
-	messages := s.messageStore.GetAll()
+	// Add cache control headers to prevent caching
+	c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+	c.Header("Pragma", "no-cache")
+	c.Header("Expires", "0")
+
+	log.Printf("Handling GET /messages request")
+	messages, err := s.messageStore.GetAll()
+	if err != nil {
+		log.Printf("Error getting messages: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve messages"})
+		return
+	}
+
+	log.Printf("Returning %d messages", len(messages))
+	for i, msg := range messages {
+		log.Printf("Message %d: ID=%s, Text=%s", i, msg.ID, msg.Text)
+	}
+
 	c.JSON(http.StatusOK, messages)
 }
 
 // createMessage creates a new message
 func (s *Server) createMessage(c *gin.Context) {
+	log.Printf("Handling POST /messages request")
+
 	var request struct {
 		Text string `json:"text" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
+		log.Printf("Error binding JSON: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	log.Printf("Creating new message with text: %s", request.Text)
 	message := model.NewMessage(request.Text)
-	s.messageStore.Add(message)
+	log.Printf("Generated message with ID: %s", message.ID)
+
+	err := s.messageStore.Add(message)
+	if err != nil {
+		log.Printf("Error adding message: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to store message"})
+		return
+	}
+
+	log.Printf("Successfully added message with ID: %s", message.ID)
+
+	// Add cache control headers to prevent caching
+	c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+	c.Header("Pragma", "no-cache")
+	c.Header("Expires", "0")
 
 	c.JSON(http.StatusCreated, message)
 }

@@ -1,26 +1,22 @@
-name: Deploy AWS End-to-End Example
+name: Deploy AWS End-to-End Application
 
 on:
   workflow_dispatch:
 
 jobs:
-  # Deploy backend infrastructure (Logging, Networking, ECS Cluster)
-  deploy-backend-infrastructure:
-    name: Deploy Backend Infrastructure
+  # Deploy common infrastructure (VPC, ECS cluster, etc.)
+  deploy-common-infrastructure:
+    name: Deploy Common Infrastructure
     runs-on: ubuntu-latest
     outputs:
-      LogGroupArn: ${{ steps.deploy-logging-stack.outputs.LogGroupArn }}
-      LogGroupName: ${{ steps.deploy-logging-stack.outputs.LogGroupName }}
-      VpcId: ${{ steps.deploy-network-stack.outputs.VpcId }}
-      PublicSubnet1: ${{ steps.deploy-network-stack.outputs.PublicSubnet1 }}
-      PublicSubnet2: ${{ steps.deploy-network-stack.outputs.PublicSubnet2 }}
-      PrivateSubnet1: ${{ steps.deploy-network-stack.outputs.PrivateSubnet1 }}
-      PrivateSubnet2: ${{ steps.deploy-network-stack.outputs.PrivateSubnet2 }}
-      ECSClusterName: ${{ steps.deploy-ecs-stack.outputs.ClusterName }}
-      LoadBalancerArn: ${{ steps.deploy-alb-stack.outputs.LoadBalancerArn }}
-      LoadBalancerDnsName: ${{ steps.deploy-alb-stack.outputs.LoadBalancerDnsName }}
-      TargetGroupArn: ${{ steps.deploy-alb-stack.outputs.TargetGroupArn }}
-      ALBSecurityGroupId: ${{ steps.deploy-alb-stack.outputs.ALBSecurityGroupId }}
+      LoggingKMSKeyArn: ${{ steps.deploy-log-kms-key.outputs.LoggingKMSKeyArn }}
+      VpcId: ${{ steps.deploy-networking.outputs.VpcId }}
+      PublicSubnet1: ${{ steps.deploy-networking.outputs.PublicSubnet1 }}
+      PublicSubnet2: ${{ steps.deploy-networking.outputs.PublicSubnet2 }}
+      PrivateSubnet1: ${{ steps.deploy-networking.outputs.PrivateSubnet1 }}
+      PrivateSubnet2: ${{ steps.deploy-networking.outputs.PrivateSubnet2 }}
+      ECSClusterName: ${{ steps.deploy-ecs.outputs.ClusterName }}
+      TaskExecutionRoleArn: ${{ steps.deploy-ecs-task-execution-role.outputs.TaskExecutionRoleArn }}
 
     steps:
       - name: Checkout code
@@ -35,101 +31,61 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
 
-      - name: Deploy Logging Stack
-        id: deploy-logging-stack
+      - name: Deploy Logging Encryption Key
+        id: deploy-log-kms-key
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: LoggingStack
-          template: iac/logging.yaml
+          name: ${{ env.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-LoggingEncryptionKeyStack
+          template: iac/log-kms-key.yaml
           parameter-overrides: >-
+            ApplicationName=${{ env.APPLICATION_NAME }},
             Environment=${{ env.ENVIRONMENT }}
           capabilities: CAPABILITY_NAMED_IAM
-          no-fail-on-empty-changeset: "1"
+          no-fail-on-empty-changeset: "1"       
 
-      - name: Deploy Networking Stack
-        id: deploy-network-stack
+      - name: Deploy Networking
+        id: deploy-networking
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: NetworkStack
+          name: ${{ env.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-NetworkStack
           template: iac/networking.yaml
           parameter-overrides: >-
+            ApplicationName=${{ env.APPLICATION_NAME }},
             Environment=${{ env.ENVIRONMENT }}
           capabilities: CAPABILITY_NAMED_IAM
           no-fail-on-empty-changeset: "1"
 
       - name: Deploy ECS Stack
-        id: deploy-ecs-stack
+        id: deploy-ecs
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: ECSStack
+          name: ${{ env.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-ECSStack
           template: iac/ecs.yaml
           parameter-overrides: >-
+            ApplicationName=${{ env.APPLICATION_NAME }},
             Environment=${{ env.ENVIRONMENT }}
           capabilities: CAPABILITY_NAMED_IAM
           no-fail-on-empty-changeset: "1"
 
-      - name: Deploy ALB Stack
-        id: deploy-alb-stack
+      - name: Deploy ECS Task Execution Role
+        id: deploy-ecs-task-execution-role
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: ALBStack
-          template: iac/alb.yaml
+          name: ${{ env.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-TaskExecutionRoleStack
+          template: iac/task-execution-role.yaml
           parameter-overrides: >-
-            Environment=${{ env.ENVIRONMENT }},
-            VpcId=${{ steps.deploy-network-stack.outputs.VpcId }},
-            PublicSubnet1=${{ steps.deploy-network-stack.outputs.PublicSubnet1 }},
-            PublicSubnet2=${{ steps.deploy-network-stack.outputs.PublicSubnet2 }},
-            CertificateArn=${{ vars.ACM_CERTIFICATE_ARN }},
-            HttpsListenerPort=${{ env.HTTPS_LISTENER_PORT || '443' }}
+            ApplicationName=${{ env.APPLICATION_NAME }},
+            Environment=${{ env.ENVIRONMENT }}
           capabilities: CAPABILITY_NAMED_IAM
           no-fail-on-empty-changeset: "1"
 
-  # Deploy DynamoDB for message storage
-  deploy-dynamodb:
-    name: Deploy DynamoDB
+  # Deploy message service
+  deploy-message-service:
+    name: Deploy Message Service
     runs-on: ubuntu-latest
-    outputs:
-      TableName: ${{ steps.deploy-dynamodb-stack.outputs.TableName }}
-      TableArn: ${{ steps.deploy-dynamodb-stack.outputs.TableArn }}
-    needs:
-      - deploy-backend-infrastructure
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Configure AWS credentials
-        uses: ./.github/actions/configure-aws-credentials
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-
-      - name: Deploy DynamoDB Stack
-        id: deploy-dynamodb-stack
-        uses: aws-actions/aws-cloudformation-github-deploy@v1
-        with:
-          name: DynamoDBStack
-          template: iac/dynamodb.yaml
-          parameter-overrides: >-
-            Environment=${{ env.ENVIRONMENT }},
-            TableName=awse2e-messages
-          capabilities: CAPABILITY_NAMED_IAM
-          no-fail-on-empty-changeset: "1"
-
-  # Deploy API service (ECS Task/Service, ALB)
-  deploy-api-service:
-    name: Deploy API Service
-    runs-on: ubuntu-latest
-    outputs:
-      RepositoryUri: ${{ steps.deploy-ecr-stack.outputs.RepositoryUri }}
-      TaskDefinitionArn: ${{ steps.deploy-api-task.outputs.TaskDefinitionArn }}
-      ServiceName: ${{ steps.deploy-api-service.outputs.ServiceName }}
-    needs:
-      - deploy-backend-infrastructure
-      - deploy-dynamodb
+    needs: deploy-common-infrastructure
+    env:
+      SERVICE_NAME: msgsvc
 
     steps:
       - name: Checkout code
@@ -144,15 +100,16 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
 
-      - name: Deploy ECR Stack
-        id: deploy-ecr-stack
+      - name: Deploy ECR Repo
+        id: deploy-ecr-repo
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: ECRStack
+          name: ${{ env.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-${{ env.SERVICE_NAME }}-ECRStack
           template: iac/ecr.yaml
           parameter-overrides: >-
+            ApplicationName=${{ env.APPLICATION_NAME }},
             Environment=${{ env.ENVIRONMENT }},
-            RepositoryName=awse2e-api
+            ServiceName=${{ env.SERVICE_NAME }}
           capabilities: CAPABILITY_NAMED_IAM
           no-fail-on-empty-changeset: "1"
 
@@ -166,52 +123,45 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v4
         with:
-          context: ./api
+          context: ./msgsvc
           push: true
           platforms: linux/amd64
           tags: |
-            ${{ steps.deploy-ecr-stack.outputs.RepositoryUri }}:latest
-            ${{ steps.deploy-ecr-stack.outputs.RepositoryUri }}:${{ github.sha }}
+            ${{ steps.deploy-ecr-repo.outputs.RepositoryUri }}:latest
+            ${{ steps.deploy-ecr-repo.outputs.RepositoryUri }}:${{ github.sha }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.created=${{ github.event.repository.updated_at }}
 
-      - name: Deploy API Task Definition
-        id: deploy-api-task
+      - name: Generate Deployment Timestamp
+        id: timestamp
+        run: echo "deployment_timestamp=$(date +%s)" >> $GITHUB_OUTPUT
+
+      - name: Deploy ECS Service
+        id: deploy-ecs-service
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: APITaskStack
-          template: iac/ecs-task.yaml
+          name: ${{ env.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-${{ env.SERVICE_NAME }}-ECSServiceStack
+          template: iac/msgsvc.yaml
           parameter-overrides: >-
+            LoggingKMSKeyArn=${{ needs.deploy-common-infrastructure.outputs.LoggingKMSKeyArn }},
+            ApplicationName=${{ env.APPLICATION_NAME }},
             Environment=${{ env.ENVIRONMENT }},
-            EcrRepositoryUri=${{ steps.deploy-ecr-stack.outputs.RepositoryUri }}:${{ github.sha }},
-            ContainerName=awse2e-api,
-            ContainerPort=${{ env.API_CONTAINER_PORT || '8080' }},
-            LogGroupName=${{ needs.deploy-backend-infrastructure.outputs.LogGroupName }}
+            ServiceName=${{ env.SERVICE_NAME }},
+            EcrRepositoryUri=${{ steps.deploy-ecr-repo.outputs.RepositoryUri }}:${{ github.sha }},
+            TaskExecutionRoleArn=${{ needs.deploy-common-infrastructure.outputs.TaskExecutionRoleArn }},
+            VpcId=${{ needs.deploy-common-infrastructure.outputs.VpcId }},
+            PublicSubnet1=${{ needs.deploy-common-infrastructure.outputs.PublicSubnet1 }},
+            PublicSubnet2=${{ needs.deploy-common-infrastructure.outputs.PublicSubnet2 }},
+            PrivateSubnet1=${{ needs.deploy-common-infrastructure.outputs.PrivateSubnet1 }},
+            PrivateSubnet2=${{ needs.deploy-common-infrastructure.outputs.PrivateSubnet2 }},
+            ECSClusterName=${{ needs.deploy-common-infrastructure.outputs.ECSClusterName }},
+            CertificateArn=${{ vars.ACM_CERTIFICATE_ARN }},
+            DeploymentTimestamp=${{ steps.timestamp.outputs.deployment_timestamp }}
           capabilities: CAPABILITY_NAMED_IAM
           no-fail-on-empty-changeset: "1"
 
-      - name: Deploy API Service Stack
-        id: deploy-api-service
-        uses: aws-actions/aws-cloudformation-github-deploy@v1
-        with:
-          name: APIServicestack
-          template: iac/ecs-service.yaml
-          parameter-overrides: >-
-            Environment=${{ env.ENVIRONMENT }},
-            ServiceName=awse2e-api-service,
-            ECSClusterName=${{ needs.deploy-backend-infrastructure.outputs.ECSClusterName }},
-            TargetGroupArn=${{ needs.deploy-backend-infrastructure.outputs.TargetGroupArn }},
-            TaskDefinitionArn=${{ steps.deploy-api-task.outputs.TaskDefinitionArn }},
-            VpcId=${{ needs.deploy-backend-infrastructure.outputs.VpcId }},
-            PrivateSubnet1=${{ needs.deploy-backend-infrastructure.outputs.PrivateSubnet1 }},
-            PrivateSubnet2=${{ needs.deploy-backend-infrastructure.outputs.PrivateSubnet2 }},
-            ALBSecurityGroupId=${{ needs.deploy-backend-infrastructure.outputs.ALBSecurityGroupId }},
-            ContainerName=awse2e-api,
-            ContainerPort=${{ env.API_CONTAINER_PORT || '8080' }}
-          capabilities: CAPABILITY_NAMED_IAM
-          no-fail-on-empty-changeset: "1"
 
   # Deploy other microservices...
 
@@ -222,6 +172,8 @@ jobs:
     outputs:
       BucketName: ${{ steps.deploy-cloudfront-stack.outputs.BucketName }}
       CloudFrontDistributionId: ${{ steps.deploy-cloudfront-stack.outputs.CloudFrontDistributionId }}
+    env:
+      DISTRIBUTION_NAME: main
 
     steps:
       - name: Checkout code
@@ -240,11 +192,13 @@ jobs:
         id: deploy-cloudfront-stack
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: CloudFrontStack
+          name: ${{ env.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-CloudFrontStack
           template: iac/cloudfront.yaml
           parameter-overrides: >-
+            ApplicationName=${{ env.APPLICATION_NAME }},
             Environment=${{ env.ENVIRONMENT }},
-            DomainName=${{ env.DOMAIN_NAME || format('{0}.example.com', env.ENVIRONMENT) }},
+            DistributionName=${{ env.DISTRIBUTION_NAME }},
+            DomainName=${{ env.DOMAIN_NAME }},
             CertificateArn=${{ vars.ACM_CERTIFICATE_ARN }}
           capabilities: CAPABILITY_NAMED_IAM
           no-fail-on-empty-changeset: "1"
