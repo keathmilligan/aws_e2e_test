@@ -2,11 +2,22 @@ name: Deploy AWS End-to-End Application
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
 
 jobs:
   # Deploy common infrastructure (VPC, ECS cluster, etc.)
   deploy-common-infrastructure:
     name: Deploy Common Infrastructure
+    environment: ${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
     outputs:
       LoggingKMSKeyArn: ${{ steps.deploy-log-kms-key.outputs.LoggingKMSKeyArn }}
@@ -17,6 +28,8 @@ jobs:
       PrivateSubnet2: ${{ steps.deploy-networking.outputs.PrivateSubnet2 }}
       ECSClusterName: ${{ steps.deploy-ecs.outputs.ClusterName }}
       TaskExecutionRoleArn: ${{ steps.deploy-ecs-task-execution-role.outputs.TaskExecutionRoleArn }}
+    env:
+      ENVIRONMENT: ${{ github.event.inputs.environment }}
 
     steps:
       - name: Checkout code
@@ -26,7 +39,7 @@ jobs:
         uses: ./.github/actions/configure-aws-credentials
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ vars.AWS_REGION }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
@@ -35,10 +48,10 @@ jobs:
         id: deploy-log-kms-key
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: ${{ env.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-LoggingEncryptionKeyStack
+          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-LoggingEncryptionKeyStack
           template: iac/log-kms-key.yaml
           parameter-overrides: >-
-            ApplicationName=${{ env.APPLICATION_NAME }},
+            ApplicationName=${{ vars.APPLICATION_NAME }},
             Environment=${{ env.ENVIRONMENT }}
           capabilities: CAPABILITY_NAMED_IAM
           no-fail-on-empty-changeset: "1"       
@@ -47,10 +60,10 @@ jobs:
         id: deploy-networking
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: ${{ env.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-NetworkStack
+          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-NetworkStack
           template: iac/networking.yaml
           parameter-overrides: >-
-            ApplicationName=${{ env.APPLICATION_NAME }},
+            ApplicationName=${{ vars.APPLICATION_NAME }},
             Environment=${{ env.ENVIRONMENT }}
           capabilities: CAPABILITY_NAMED_IAM
           no-fail-on-empty-changeset: "1"
@@ -59,10 +72,10 @@ jobs:
         id: deploy-ecs
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: ${{ env.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-ECSStack
+          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-ECSStack
           template: iac/ecs.yaml
           parameter-overrides: >-
-            ApplicationName=${{ env.APPLICATION_NAME }},
+            ApplicationName=${{ vars.APPLICATION_NAME }},
             Environment=${{ env.ENVIRONMENT }}
           capabilities: CAPABILITY_NAMED_IAM
           no-fail-on-empty-changeset: "1"
@@ -71,10 +84,10 @@ jobs:
         id: deploy-ecs-task-execution-role
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: ${{ env.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-TaskExecutionRoleStack
+          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-TaskExecutionRoleStack
           template: iac/task-execution-role.yaml
           parameter-overrides: >-
-            ApplicationName=${{ env.APPLICATION_NAME }},
+            ApplicationName=${{ vars.APPLICATION_NAME }},
             Environment=${{ env.ENVIRONMENT }}
           capabilities: CAPABILITY_NAMED_IAM
           no-fail-on-empty-changeset: "1"
@@ -83,8 +96,10 @@ jobs:
   deploy-message-service:
     name: Deploy Message Service
     runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
     needs: deploy-common-infrastructure
     env:
+      ENVIRONMENT: ${{ github.event.inputs.environment }}
       SERVICE_NAME: msgsvc
 
     steps:
@@ -95,7 +110,7 @@ jobs:
         uses: ./.github/actions/configure-aws-credentials
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ vars.AWS_REGION }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
@@ -104,10 +119,10 @@ jobs:
         id: deploy-ecr-repo
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: ${{ env.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-${{ env.SERVICE_NAME }}-ECRStack
+          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-${{ env.SERVICE_NAME }}-ECRStack
           template: iac/ecr.yaml
           parameter-overrides: >-
-            ApplicationName=${{ env.APPLICATION_NAME }},
+            ApplicationName=${{ vars.APPLICATION_NAME }},
             Environment=${{ env.ENVIRONMENT }},
             ServiceName=${{ env.SERVICE_NAME }}
           capabilities: CAPABILITY_NAMED_IAM
@@ -142,11 +157,11 @@ jobs:
         id: deploy-ecs-service
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: ${{ env.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-${{ env.SERVICE_NAME }}-ECSServiceStack
+          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-${{ env.SERVICE_NAME }}-ECSServiceStack
           template: iac/msgsvc.yaml
           parameter-overrides: >-
             LoggingKMSKeyArn=${{ needs.deploy-common-infrastructure.outputs.LoggingKMSKeyArn }},
-            ApplicationName=${{ env.APPLICATION_NAME }},
+            ApplicationName=${{ vars.APPLICATION_NAME }},
             Environment=${{ env.ENVIRONMENT }},
             ServiceName=${{ env.SERVICE_NAME }},
             EcrRepositoryUri=${{ steps.deploy-ecr-repo.outputs.RepositoryUri }}:${{ github.sha }},
@@ -169,10 +184,12 @@ jobs:
   deploy-frontend-infrastructure:
     name: Deploy Frontend Infrastructure
     runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
     outputs:
       BucketName: ${{ steps.deploy-cloudfront-stack.outputs.BucketName }}
       CloudFrontDistributionId: ${{ steps.deploy-cloudfront-stack.outputs.CloudFrontDistributionId }}
     env:
+      ENVIRONMENT: ${{ github.event.inputs.environment }}
       DISTRIBUTION_NAME: main
 
     steps:
@@ -183,7 +200,7 @@ jobs:
         uses: ./.github/actions/configure-aws-credentials
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ vars.AWS_REGION }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
@@ -192,13 +209,13 @@ jobs:
         id: deploy-cloudfront-stack
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: ${{ env.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-CloudFrontStack
+          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-CloudFrontStack
           template: iac/cloudfront.yaml
           parameter-overrides: >-
-            ApplicationName=${{ env.APPLICATION_NAME }},
+            ApplicationName=${{ vars.APPLICATION_NAME }},
             Environment=${{ env.ENVIRONMENT }},
             DistributionName=${{ env.DISTRIBUTION_NAME }},
-            DomainName=${{ env.DOMAIN_NAME }},
+            DomainName=${{ vars.DOMAIN_NAME }},
             CertificateArn=${{ vars.ACM_CERTIFICATE_ARN }}
           capabilities: CAPABILITY_NAMED_IAM
           no-fail-on-empty-changeset: "1"
@@ -207,6 +224,7 @@ jobs:
   deploy-frontend:
     name: Deploy Frontend
     runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
     needs: deploy-frontend-infrastructure
 
     steps:
@@ -217,7 +235,7 @@ jobs:
         uses: ./.github/actions/configure-aws-credentials
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ vars.AWS_REGION }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
@@ -233,13 +251,13 @@ jobs:
         run: |
           cd frontend
           npm install
-          REACT_APP_API_URL=https://${{ env.API_DOMAIN_NAME }} npm run build
+          REACT_APP_API_URL=https://${{ vars.API_DOMAIN_NAME }} npm run build
 
       - name: Deploy Frontend to S3
         uses: reggionick/s3-deploy@v4
         with:
           bucket: ${{ needs.deploy-frontend-infrastructure.outputs.BucketName }}
-          bucket-region: ${{ env.AWS_REGION }}
+          bucket-region: ${{ vars.AWS_REGION }}
           folder: 'frontend/build'
           delete-removed: true
           dist-id: ${{ needs.deploy-frontend-infrastructure.outputs.CloudFrontDistributionId }}
