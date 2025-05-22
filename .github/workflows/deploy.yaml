@@ -178,7 +178,174 @@ jobs:
           no-fail-on-empty-changeset: "1"
 
 
-  # Deploy other microservices...
+  # Deploy Cognito resources
+  deploy-cognito:
+    name: Deploy Cognito Resources
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    needs: deploy-common-infrastructure
+    outputs:
+      UserPoolId: ${{ steps.deploy-cognito-stack.outputs.UserPoolId }}
+      UserPoolClientId: ${{ steps.deploy-cognito-stack.outputs.UserPoolClientId }}
+    env:
+      ENVIRONMENT: ${{ github.event.inputs.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: ./.github/actions/configure-aws-credentials
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Deploy Cognito Stack
+        id: deploy-cognito-stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-CognitoStack
+          template: iac/cognito.yaml
+          parameter-overrides: >-
+            ApplicationName=${{ vars.APPLICATION_NAME }},
+            Environment=${{ env.ENVIRONMENT }},
+            UserPoolName=UserPool,
+            ClientName=AppClient
+          capabilities: CAPABILITY_NAMED_IAM
+          no-fail-on-empty-changeset: "1"
+
+  # Deploy user service
+  deploy-user-service:
+    name: Deploy User Service
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    needs: [deploy-common-infrastructure, deploy-cognito]
+    outputs:
+      UserServiceURL: ${{ steps.deploy-ecs-service.outputs.LoadBalancerURL }}
+    env:
+      ENVIRONMENT: ${{ github.event.inputs.environment }}
+      SERVICE_NAME: usersvc
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: ./.github/actions/configure-aws-credentials
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Deploy ECR Repo
+        id: deploy-ecr-repo
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-${{ env.SERVICE_NAME }}-ECRStack
+          template: iac/ecr.yaml
+          parameter-overrides: >-
+            ApplicationName=${{ vars.APPLICATION_NAME }},
+            Environment=${{ env.ENVIRONMENT }},
+            ServiceName=${{ env.SERVICE_NAME }}
+          capabilities: CAPABILITY_NAMED_IAM
+          no-fail-on-empty-changeset: "1"
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./usersvc
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ steps.deploy-ecr-repo.outputs.RepositoryUri }}:latest
+            ${{ steps.deploy-ecr-repo.outputs.RepositoryUri }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.repository.updated_at }}
+
+      - name: Generate Deployment Timestamp
+        id: timestamp
+        run: echo "deployment_timestamp=$(date +%s)" >> $GITHUB_OUTPUT
+
+      - name: Deploy ECS Service
+        id: deploy-ecs-service
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-${{ env.SERVICE_NAME }}-ECSServiceStack
+          template: iac/usersvc.yaml
+          parameter-overrides: >-
+            LoggingKMSKeyArn=${{ needs.deploy-common-infrastructure.outputs.LoggingKMSKeyArn }},
+            ApplicationName=${{ vars.APPLICATION_NAME }},
+            Environment=${{ env.ENVIRONMENT }},
+            ServiceName=${{ env.SERVICE_NAME }},
+            EcrRepositoryUri=${{ steps.deploy-ecr-repo.outputs.RepositoryUri }}:${{ github.sha }},
+            TaskExecutionRoleArn=${{ needs.deploy-common-infrastructure.outputs.TaskExecutionRoleArn }},
+            VpcId=${{ needs.deploy-common-infrastructure.outputs.VpcId }},
+            PublicSubnet1=${{ needs.deploy-common-infrastructure.outputs.PublicSubnet1 }},
+            PublicSubnet2=${{ needs.deploy-common-infrastructure.outputs.PublicSubnet2 }},
+            PrivateSubnet1=${{ needs.deploy-common-infrastructure.outputs.PrivateSubnet1 }},
+            PrivateSubnet2=${{ needs.deploy-common-infrastructure.outputs.PrivateSubnet2 }},
+            ECSClusterName=${{ needs.deploy-common-infrastructure.outputs.ECSClusterName }},
+            CertificateArn=${{ vars.ACM_CERTIFICATE_ARN }},
+            UserPoolId=${{ needs.deploy-cognito.outputs.UserPoolId }},
+            UserPoolClientId=${{ needs.deploy-cognito.outputs.UserPoolClientId }},
+            DeploymentTimestamp=${{ steps.timestamp.outputs.deployment_timestamp }}
+          capabilities: CAPABILITY_NAMED_IAM
+          no-fail-on-empty-changeset: "1"
+
+  # Deploy API Gateway
+  deploy-api-gateway:
+    name: Deploy API Gateway
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    needs: [deploy-cognito, deploy-message-service, deploy-user-service]
+    outputs:
+      ApiGatewayURL: ${{ steps.deploy-api-gateway-stack.outputs.ApiGatewayURL }}
+    env:
+      ENVIRONMENT: ${{ github.event.inputs.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: ./.github/actions/configure-aws-credentials
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Deploy API Gateway Stack
+        id: deploy-api-gateway-stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-ApiGatewayStack
+          template: iac/api-gateway.yaml
+          parameter-overrides: >-
+            ApplicationName=${{ vars.APPLICATION_NAME }},
+            Environment=${{ env.ENVIRONMENT }},
+            UserPoolId=${{ needs.deploy-cognito.outputs.UserPoolId }},
+            UserServiceURL=${{ needs.deploy-user-service.outputs.UserServiceURL }},
+            MessageServiceURL=${{ needs.deploy-message-service.outputs.LoadBalancerURL }},
+            DomainName=${{ vars.API_DOMAIN_NAME }},
+            CertificateArn=${{ vars.ACM_CERTIFICATE_ARN }}
+          capabilities: CAPABILITY_NAMED_IAM
+          no-fail-on-empty-changeset: "1"
 
   # Deploy frontend infrastructure (S3, CloudFront)
   deploy-frontend-infrastructure:
@@ -225,7 +392,7 @@ jobs:
     name: Deploy Frontend
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment }}
-    needs: deploy-frontend-infrastructure
+    needs: [deploy-frontend-infrastructure, deploy-api-gateway]
 
     steps:
       - name: Checkout code
@@ -251,7 +418,7 @@ jobs:
         run: |
           cd frontend
           npm install
-          REACT_APP_API_URL=https://${{ vars.API_DOMAIN_NAME }} npm run build
+          REACT_APP_API_URL=https://${{ vars.API_DOMAIN_NAME }} REACT_APP_USER_POOL_ID=${{ needs.deploy-cognito.outputs.UserPoolId }} REACT_APP_USER_POOL_CLIENT_ID=${{ needs.deploy-cognito.outputs.UserPoolClientId }} npm run build
 
       - name: Deploy Frontend to S3
         uses: reggionick/s3-deploy@v4

@@ -1,0 +1,309 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'AWS Deployment - API Gateway with Cognito Authorizer'
+
+Parameters:
+  ApplicationName:
+    Type: String
+    Description: Name of the application
+
+  Environment:
+    Type: String
+    Description: Environment name (dev, staging, prod)
+
+  UserPoolId:
+    Type: String
+    Description: ID of the Cognito User Pool
+
+  UserServiceURL:
+    Type: String
+    Description: URL of the User Service
+
+  MessageServiceURL:
+    Type: String
+    Description: URL of the Message Service
+
+  DomainName:
+    Type: String
+    Description: Domain name for the API Gateway
+
+  CertificateArn:
+    Type: String
+    Description: ARN of the ACM certificate for the API Gateway domain
+
+Resources:
+  # API Gateway REST API
+  ApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub "${ApplicationName}-${Environment}-api"
+      Description: !Sub "API Gateway for ${ApplicationName} ${Environment}"
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: !Ref ApplicationName
+        - Key: ManagedBy
+          Value: "CloudFormation"
+
+  # Cognito Authorizer
+  CognitoAuthorizer:
+    Type: AWS::ApiGateway::Authorizer
+    Properties:
+      Name: !Sub "${ApplicationName}-${Environment}-cognito-authorizer"
+      RestApiId: !Ref ApiGateway
+      Type: COGNITO_USER_POOLS
+      IdentitySource: method.request.header.Authorization
+      ProviderARNs:
+        - !Sub "arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${UserPoolId}"
+
+  # API Gateway Resources
+  # Root resource for user service
+  UserServiceResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: "users"
+
+  # Root resource for auth service
+  AuthServiceResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: "auth"
+
+  # Root resource for message service
+  MessageServiceResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: "messages"
+
+  # User Service Proxy Resource
+  UserServiceProxyResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref UserServiceResource
+      PathPart: "{proxy+}"
+
+  # Auth Service Proxy Resource
+  AuthServiceProxyResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref AuthServiceResource
+      PathPart: "{proxy+}"
+
+  # Message Service Proxy Resource
+  MessageServiceProxyResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref MessageServiceResource
+      PathPart: "{proxy+}"
+
+  # User Service ANY Method
+  UserServiceAnyMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref UserServiceResource
+      HttpMethod: ANY
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: ANY
+        Uri: !Sub "${UserServiceURL}/users"
+        ConnectionType: INTERNET
+        TimeoutInMillis: 29000
+        IntegrationResponses:
+          - StatusCode: 200
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: "Empty"
+
+  # User Service Proxy ANY Method
+  UserServiceProxyAnyMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref UserServiceProxyResource
+      HttpMethod: ANY
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      RequestParameters:
+        method.request.path.proxy: true
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: ANY
+        Uri: !Sub "${UserServiceURL}/users/{proxy}"
+        RequestParameters:
+          integration.request.path.proxy: method.request.path.proxy
+        ConnectionType: INTERNET
+        TimeoutInMillis: 29000
+        IntegrationResponses:
+          - StatusCode: 200
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: "Empty"
+
+  # Auth Service ANY Method (No authorization required for auth endpoints)
+  AuthServiceAnyMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref AuthServiceResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: ANY
+        Uri: !Sub "${UserServiceURL}/auth"
+        ConnectionType: INTERNET
+        TimeoutInMillis: 29000
+        IntegrationResponses:
+          - StatusCode: 200
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: "Empty"
+
+  # Auth Service Proxy ANY Method (No authorization required for auth endpoints)
+  AuthServiceProxyAnyMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref AuthServiceProxyResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.proxy: true
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: ANY
+        Uri: !Sub "${UserServiceURL}/auth/{proxy}"
+        RequestParameters:
+          integration.request.path.proxy: method.request.path.proxy
+        ConnectionType: INTERNET
+        TimeoutInMillis: 29000
+        IntegrationResponses:
+          - StatusCode: 200
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: "Empty"
+
+  # Message Service ANY Method (Requires authorization)
+  MessageServiceAnyMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref MessageServiceResource
+      HttpMethod: ANY
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: ANY
+        Uri: !Sub "${MessageServiceURL}/messages"
+        ConnectionType: INTERNET
+        TimeoutInMillis: 29000
+        IntegrationResponses:
+          - StatusCode: 200
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: "Empty"
+
+  # Message Service Proxy ANY Method (Requires authorization)
+  MessageServiceProxyAnyMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref MessageServiceProxyResource
+      HttpMethod: ANY
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      RequestParameters:
+        method.request.path.proxy: true
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: ANY
+        Uri: !Sub "${MessageServiceURL}/messages/{proxy}"
+        RequestParameters:
+          integration.request.path.proxy: method.request.path.proxy
+        ConnectionType: INTERNET
+        TimeoutInMillis: 29000
+        IntegrationResponses:
+          - StatusCode: 200
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: "Empty"
+
+  # API Gateway Deployment
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - UserServiceAnyMethod
+      - UserServiceProxyAnyMethod
+      - AuthServiceAnyMethod
+      - AuthServiceProxyAnyMethod
+      - MessageServiceAnyMethod
+      - MessageServiceProxyAnyMethod
+    Properties:
+      RestApiId: !Ref ApiGateway
+      StageName: !Ref Environment
+
+  # API Gateway Custom Domain
+  ApiGatewayDomainName:
+    Type: AWS::ApiGateway::DomainName
+    Properties:
+      DomainName: !Ref DomainName
+      RegionalCertificateArn: !Ref CertificateArn
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      SecurityPolicy: TLS_1_2
+
+  # API Gateway Base Path Mapping
+  ApiGatewayBasePathMapping:
+    Type: AWS::ApiGateway::BasePathMapping
+    Properties:
+      DomainName: !Ref ApiGatewayDomainName
+      RestApiId: !Ref ApiGateway
+      Stage: !Ref Environment
+
+Outputs:
+  ApiGatewayId:
+    Description: ID of the API Gateway
+    Value: !Ref ApiGateway
+    Export:
+      Name: !Sub "${ApplicationName}-${Environment}-ApiGatewayId"
+
+  ApiGatewayURL:
+    Description: URL of the API Gateway
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}"
+    Export:
+      Name: !Sub "${ApplicationName}-${Environment}-ApiGatewayURL"
+
+  ApiGatewayCustomDomainURL:
+    Description: Custom domain URL of the API Gateway
+    Value: !Sub "https://${DomainName}"
+    Export:
+      Name: !Sub "${ApplicationName}-${Environment}-ApiGatewayCustomDomainURL"
+
+  RegionalDomainName:
+    Description: Regional domain name of the API Gateway
+    Value: !GetAtt ApiGatewayDomainName.RegionalDomainName
+    Export:
+      Name: !Sub "${ApplicationName}-${Environment}-ApiGatewayRegionalDomainName"
