@@ -20,6 +20,18 @@ Parameters:
     Default: AppClient
     Description: Name of the Cognito App Client
 
+  DomainName:
+    Type: String
+    Description: Domain name for the application
+
+  AuthDomainName:
+    Type: String
+    Description: Domain name for the Cognito User Pool domain
+
+  CertificateArn:
+    Type: String
+    Description: ARN of the ACM certificate for the custom domain
+
   EmailVerificationSubject:
     Type: String
     Default: "Verify your email for our app"
@@ -69,13 +81,10 @@ Resources:
         RecoveryMechanisms:
           - Name: verified_email
             Priority: 1
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
-        - Key: Application
-          Value: !Ref ApplicationName
-        - Key: ManagedBy
-          Value: "CloudFormation"
+      UserPoolTags:
+        Environment: !Ref Environment
+        Application: !Ref ApplicationName
+        ManagedBy: "CloudFormation"
 
   # Cognito App Client
   UserPoolClient:
@@ -99,10 +108,10 @@ Resources:
       SupportedIdentityProviders:
         - COGNITO
       CallbackURLs:
-        - !Sub "https://${ApplicationName}-${Environment}.example.com"
+        - !Sub "https://${DomainName}"
         - "http://localhost:3000"
       LogoutURLs:
-        - !Sub "https://${ApplicationName}-${Environment}.example.com"
+        - !Sub "https://${DomainName}"
         - "http://localhost:3000"
       AllowedOAuthFlows:
         - implicit
@@ -114,12 +123,14 @@ Resources:
         - profile
       AllowedOAuthFlowsUserPoolClient: true
 
-  # Domain for Cognito (optional, for hosted UI)
-  UserPoolDomain:
-    Type: AWS::Cognito::UserPoolDomain
-    Properties:
-      Domain: !Sub "${ApplicationName}-${Environment}"
-      UserPoolId: !Ref UserPool
+  # # Domain for Cognito (optional, for hosted UI)
+  # UserPoolDomain:
+  #   Type: AWS::Cognito::UserPoolDomain
+  #   Properties:
+  #     Domain: !Ref AuthDomainName
+  #     UserPoolId: !Ref UserPool
+  #     CustomDomainConfig:
+  #       CertificateArn: !Ref CertificateArn
 
 Outputs:
   UserPoolId:
@@ -142,6 +153,6 @@ Outputs:
 
   UserPoolDomainName:
     Description: Domain name for the Cognito User Pool
-    Value: !Sub "${ApplicationName}-${Environment}.auth.${AWS::Region}.amazoncognito.com"
+    Value: !Sub "https://${AuthDomainName}"
     Export:
       Name: !Sub "${ApplicationName}-${Environment}-UserPoolDomainName"
