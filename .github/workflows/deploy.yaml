@@ -17,7 +17,7 @@ jobs:
   # Deploy common infrastructure (VPC, ECS cluster, etc.)
   deploy-common-infrastructure:
     name: Deploy Common Infrastructure
-    environment: ${{ github.event.inputs.environment }}
+    environment: ${{ inputs.environment }}
     runs-on: ubuntu-latest
     outputs:
       LoggingKMSKeyArn: ${{ steps.deploy-log-kms-key.outputs.LoggingKMSKeyArn }}
@@ -28,8 +28,6 @@ jobs:
       PrivateSubnet2: ${{ steps.deploy-networking.outputs.PrivateSubnet2 }}
       ECSClusterName: ${{ steps.deploy-ecs.outputs.ClusterName }}
       TaskExecutionRoleArn: ${{ steps.deploy-ecs-task-execution-role.outputs.TaskExecutionRoleArn }}
-    env:
-      ENVIRONMENT: ${{ github.event.inputs.environment }}
 
     steps:
       - name: Checkout code
@@ -48,11 +46,11 @@ jobs:
         id: deploy-log-kms-key
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-LoggingEncryptionKeyStack
+          name: ${{ vars.APPLICATION_NAME }}-${{ inputs.environment }}-LoggingEncryptionKeyStack
           template: iac/log-kms-key.yaml
           parameter-overrides: >-
             ApplicationName=${{ vars.APPLICATION_NAME }},
-            Environment=${{ env.ENVIRONMENT }}
+            Environment=${{ inputs.environment }}
           capabilities: CAPABILITY_NAMED_IAM
           no-fail-on-empty-changeset: "1"       
 
@@ -60,11 +58,11 @@ jobs:
         id: deploy-networking
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-NetworkStack
+          name: ${{ vars.APPLICATION_NAME }}-${{ inputs.environment }}-NetworkStack
           template: iac/networking.yaml
           parameter-overrides: >-
             ApplicationName=${{ vars.APPLICATION_NAME }},
-            Environment=${{ env.ENVIRONMENT }}
+            Environment=${{ inputs.environment }}
           capabilities: CAPABILITY_NAMED_IAM
           no-fail-on-empty-changeset: "1"
 
@@ -72,11 +70,11 @@ jobs:
         id: deploy-ecs
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-ECSStack
+          name: ${{ vars.APPLICATION_NAME }}-${{ inputs.environment }}-ECSStack
           template: iac/ecs.yaml
           parameter-overrides: >-
             ApplicationName=${{ vars.APPLICATION_NAME }},
-            Environment=${{ env.ENVIRONMENT }}
+            Environment=${{ inputs.environment }}
           capabilities: CAPABILITY_NAMED_IAM
           no-fail-on-empty-changeset: "1"
 
@@ -84,11 +82,139 @@ jobs:
         id: deploy-ecs-task-execution-role
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-TaskExecutionRoleStack
+          name: ${{ vars.APPLICATION_NAME }}-${{ inputs.environment }}-TaskExecutionRoleStack
           template: iac/task-execution-role.yaml
           parameter-overrides: >-
             ApplicationName=${{ vars.APPLICATION_NAME }},
-            Environment=${{ env.ENVIRONMENT }}
+            Environment=${{ inputs.environment }}
+          capabilities: CAPABILITY_NAMED_IAM
+          no-fail-on-empty-changeset: "1"
+
+  # Deploy Cognito resources
+  deploy-cognito:
+    name: Deploy Cognito Resources
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    needs: deploy-common-infrastructure
+    outputs:
+      UserPoolId: ${{ steps.deploy-cognito-stack.outputs.UserPoolId }}
+      UserPoolClientId: ${{ steps.deploy-cognito-stack.outputs.UserPoolClientId }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: ./.github/actions/configure-aws-credentials
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Deploy Cognito Stack
+        id: deploy-cognito-stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ${{ vars.APPLICATION_NAME }}-${{ inputs.environment }}-CognitoStack
+          template: iac/cognito.yaml
+          parameter-overrides: >-
+            ApplicationName=${{ vars.APPLICATION_NAME }},
+            Environment=${{ inputs.environment }},
+            UserPoolName=UserPool,
+            ClientName=AppClient,
+            DomainName=${{ vars.DOMAIN_NAME }},
+            AuthDomainName=${{ vars.AUTH_DOMAIN_NAME }},
+            CertificateArn=${{ vars.ACM_CERTIFICATE_ARN }}
+          capabilities: CAPABILITY_NAMED_IAM
+          no-fail-on-empty-changeset: "1"
+
+  # Deploy Shared ALB
+  deploy-shared-alb:
+    name: Deploy Shared Application Load Balancer
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    needs: [deploy-common-infrastructure, deploy-cognito]
+    outputs:
+      SharedALBArn: ${{ steps.deploy-shared-alb-stack.outputs.SharedALBArn }}
+      SharedALBDNSName: ${{ steps.deploy-shared-alb-stack.outputs.SharedALBDNSName }}
+      SharedALBURL: ${{ steps.deploy-shared-alb-stack.outputs.SharedALBURL }}
+      SharedALBSecurityGroupId: ${{ steps.deploy-shared-alb-stack.outputs.SharedALBSecurityGroupId }}
+      UserServiceTargetGroupArn: ${{ steps.deploy-shared-alb-stack.outputs.UserServiceTargetGroupArn }}
+      MessageServiceTargetGroupArn: ${{ steps.deploy-shared-alb-stack.outputs.MessageServiceTargetGroupArn }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: ./.github/actions/configure-aws-credentials
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Deploy Shared ALB Stack
+        id: deploy-shared-alb-stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ${{ vars.APPLICATION_NAME }}-${{ inputs.environment }}-SharedALBStack
+          template: iac/shared-alb.yaml
+          parameter-overrides: >-
+            ApplicationName=${{ vars.APPLICATION_NAME }},
+            Environment=${{ inputs.environment }},
+            VpcId=${{ needs.deploy-common-infrastructure.outputs.VpcId }},
+            PublicSubnet1=${{ needs.deploy-common-infrastructure.outputs.PublicSubnet1 }},
+            PublicSubnet2=${{ needs.deploy-common-infrastructure.outputs.PublicSubnet2 }},
+            CertificateArn=${{ vars.ACM_CERTIFICATE_ARN }},
+            DomainName=${{ vars.API_DOMAIN_NAME }},
+            UserPoolId=${{ needs.deploy-cognito.outputs.UserPoolId }}
+          capabilities: CAPABILITY_NAMED_IAM
+          no-fail-on-empty-changeset: "1"
+
+  # Deploy API Gateway
+  deploy-api-gateway:
+    name: Deploy API Gateway
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    needs: [deploy-common-infrastructure, deploy-cognito, deploy-shared-alb]
+    outputs:
+      ApiGatewayId: ${{ steps.deploy-api-gateway-stack.outputs.ApiGatewayId }}
+      ApiGatewayURL: ${{ steps.deploy-api-gateway-stack.outputs.ApiGatewayURL }}
+      ApiGatewayCustomDomainURL: ${{ steps.deploy-api-gateway-stack.outputs.ApiGatewayCustomDomainURL }}
+      RegionalDomainName: ${{ steps.deploy-api-gateway-stack.outputs.RegionalDomainName }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: ./.github/actions/configure-aws-credentials
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Deploy API Gateway Stack
+        id: deploy-api-gateway-stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ${{ vars.APPLICATION_NAME }}-${{ inputs.environment }}-ApiGatewayStack
+          template: iac/api-gateway.yaml
+          parameter-overrides: >-
+            ApplicationName=${{ vars.APPLICATION_NAME }},
+            Environment=${{ inputs.environment }},
+            UserPoolId=${{ needs.deploy-cognito.outputs.UserPoolId }},
+            UserServiceURL=${{ needs.deploy-shared-alb.outputs.SharedALBURL }},
+            MessageServiceURL=${{ needs.deploy-shared-alb.outputs.SharedALBURL }},
+            ALBDNSName=${{ needs.deploy-shared-alb.outputs.SharedALBDNSName }},
+            DomainName=${{ vars.API_DOMAIN_NAME }},
+            CertificateArn=${{ vars.ACM_CERTIFICATE_ARN }}
           capabilities: CAPABILITY_NAMED_IAM
           no-fail-on-empty-changeset: "1"
 
@@ -96,10 +222,9 @@ jobs:
   deploy-message-service:
     name: Deploy Message Service
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment }}
-    needs: deploy-common-infrastructure
+    environment: ${{ inputs.environment }}
+    needs: [deploy-common-infrastructure, deploy-shared-alb, deploy-cognito, deploy-api-gateway]
     env:
-      ENVIRONMENT: ${{ github.event.inputs.environment }}
       SERVICE_NAME: msgsvc
 
     steps:
@@ -119,11 +244,11 @@ jobs:
         id: deploy-ecr-repo
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-${{ env.SERVICE_NAME }}-ECRStack
+          name: ${{ vars.APPLICATION_NAME }}-${{ inputs.environment }}-${{ env.SERVICE_NAME }}-ECRStack
           template: iac/ecr.yaml
           parameter-overrides: >-
             ApplicationName=${{ vars.APPLICATION_NAME }},
-            Environment=${{ env.ENVIRONMENT }},
+            Environment=${{ inputs.environment }},
             ServiceName=${{ env.SERVICE_NAME }}
           capabilities: CAPABILITY_NAMED_IAM
           no-fail-on-empty-changeset: "1"
@@ -138,7 +263,7 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v4
         with:
-          context: ./msgsvc
+          context: .
           push: true
           platforms: linux/amd64
           tags: |
@@ -157,63 +282,24 @@ jobs:
         id: deploy-ecs-service
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-${{ env.SERVICE_NAME }}-ECSServiceStack
+          name: ${{ vars.APPLICATION_NAME }}-${{ inputs.environment }}-${{ env.SERVICE_NAME }}-ECSServiceStack
           template: iac/msgsvc.yaml
           parameter-overrides: >-
             LoggingKMSKeyArn=${{ needs.deploy-common-infrastructure.outputs.LoggingKMSKeyArn }},
             ApplicationName=${{ vars.APPLICATION_NAME }},
-            Environment=${{ env.ENVIRONMENT }},
+            Environment=${{ inputs.environment }},
             ServiceName=${{ env.SERVICE_NAME }},
             EcrRepositoryUri=${{ steps.deploy-ecr-repo.outputs.RepositoryUri }}:${{ github.sha }},
             TaskExecutionRoleArn=${{ needs.deploy-common-infrastructure.outputs.TaskExecutionRoleArn }},
             VpcId=${{ needs.deploy-common-infrastructure.outputs.VpcId }},
-            PublicSubnet1=${{ needs.deploy-common-infrastructure.outputs.PublicSubnet1 }},
-            PublicSubnet2=${{ needs.deploy-common-infrastructure.outputs.PublicSubnet2 }},
             PrivateSubnet1=${{ needs.deploy-common-infrastructure.outputs.PrivateSubnet1 }},
             PrivateSubnet2=${{ needs.deploy-common-infrastructure.outputs.PrivateSubnet2 }},
             ECSClusterName=${{ needs.deploy-common-infrastructure.outputs.ECSClusterName }},
-            CertificateArn=${{ vars.ACM_CERTIFICATE_ARN }},
+            SharedALBSecurityGroupId=${{ needs.deploy-shared-alb.outputs.SharedALBSecurityGroupId }},
+            MessageServiceTargetGroupArn=${{ needs.deploy-shared-alb.outputs.MessageServiceTargetGroupArn }},
+            CognitoRegion=${{ vars.AWS_REGION }},
+            UserPoolId=${{ needs.deploy-cognito.outputs.UserPoolId }},
             DeploymentTimestamp=${{ steps.timestamp.outputs.deployment_timestamp }}
-          capabilities: CAPABILITY_NAMED_IAM
-          no-fail-on-empty-changeset: "1"
-
-
-  # Deploy Cognito resources
-  deploy-cognito:
-    name: Deploy Cognito Resources
-    runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment }}
-    needs: deploy-common-infrastructure
-    outputs:
-      UserPoolId: ${{ steps.deploy-cognito-stack.outputs.UserPoolId }}
-      UserPoolClientId: ${{ steps.deploy-cognito-stack.outputs.UserPoolClientId }}
-    env:
-      ENVIRONMENT: ${{ github.event.inputs.environment }}
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Configure AWS credentials
-        uses: ./.github/actions/configure-aws-credentials
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-
-      - name: Deploy Cognito Stack
-        id: deploy-cognito-stack
-        uses: aws-actions/aws-cloudformation-github-deploy@v1
-        with:
-          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-CognitoStack
-          template: iac/cognito.yaml
-          parameter-overrides: >-
-            ApplicationName=${{ vars.APPLICATION_NAME }},
-            Environment=${{ env.ENVIRONMENT }},
-            UserPoolName=UserPool,
-            ClientName=AppClient
           capabilities: CAPABILITY_NAMED_IAM
           no-fail-on-empty-changeset: "1"
 
@@ -221,12 +307,9 @@ jobs:
   deploy-user-service:
     name: Deploy User Service
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment }}
-    needs: [deploy-common-infrastructure, deploy-cognito]
-    outputs:
-      UserServiceURL: ${{ steps.deploy-ecs-service.outputs.LoadBalancerURL }}
+    environment: ${{ inputs.environment }}
+    needs: [deploy-common-infrastructure, deploy-cognito, deploy-shared-alb, deploy-api-gateway]
     env:
-      ENVIRONMENT: ${{ github.event.inputs.environment }}
       SERVICE_NAME: usersvc
 
     steps:
@@ -246,11 +329,11 @@ jobs:
         id: deploy-ecr-repo
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-${{ env.SERVICE_NAME }}-ECRStack
+          name: ${{ vars.APPLICATION_NAME }}-${{ inputs.environment }}-${{ env.SERVICE_NAME }}-ECRStack
           template: iac/ecr.yaml
           parameter-overrides: >-
             ApplicationName=${{ vars.APPLICATION_NAME }},
-            Environment=${{ env.ENVIRONMENT }},
+            Environment=${{ inputs.environment }},
             ServiceName=${{ env.SERVICE_NAME }}
           capabilities: CAPABILITY_NAMED_IAM
           no-fail-on-empty-changeset: "1"
@@ -265,7 +348,7 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v4
         with:
-          context: ./usersvc
+          context: .
           push: true
           platforms: linux/amd64
           tags: |
@@ -284,66 +367,24 @@ jobs:
         id: deploy-ecs-service
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-${{ env.SERVICE_NAME }}-ECSServiceStack
+          name: ${{ vars.APPLICATION_NAME }}-${{ inputs.environment }}-${{ env.SERVICE_NAME }}-ECSServiceStack
           template: iac/usersvc.yaml
           parameter-overrides: >-
             LoggingKMSKeyArn=${{ needs.deploy-common-infrastructure.outputs.LoggingKMSKeyArn }},
             ApplicationName=${{ vars.APPLICATION_NAME }},
-            Environment=${{ env.ENVIRONMENT }},
+            Environment=${{ inputs.environment }},
             ServiceName=${{ env.SERVICE_NAME }},
             EcrRepositoryUri=${{ steps.deploy-ecr-repo.outputs.RepositoryUri }}:${{ github.sha }},
             TaskExecutionRoleArn=${{ needs.deploy-common-infrastructure.outputs.TaskExecutionRoleArn }},
             VpcId=${{ needs.deploy-common-infrastructure.outputs.VpcId }},
-            PublicSubnet1=${{ needs.deploy-common-infrastructure.outputs.PublicSubnet1 }},
-            PublicSubnet2=${{ needs.deploy-common-infrastructure.outputs.PublicSubnet2 }},
             PrivateSubnet1=${{ needs.deploy-common-infrastructure.outputs.PrivateSubnet1 }},
             PrivateSubnet2=${{ needs.deploy-common-infrastructure.outputs.PrivateSubnet2 }},
             ECSClusterName=${{ needs.deploy-common-infrastructure.outputs.ECSClusterName }},
-            CertificateArn=${{ vars.ACM_CERTIFICATE_ARN }},
             UserPoolId=${{ needs.deploy-cognito.outputs.UserPoolId }},
             UserPoolClientId=${{ needs.deploy-cognito.outputs.UserPoolClientId }},
+            SharedALBSecurityGroupId=${{ needs.deploy-shared-alb.outputs.SharedALBSecurityGroupId }},
+            UserServiceTargetGroupArn=${{ needs.deploy-shared-alb.outputs.UserServiceTargetGroupArn }},
             DeploymentTimestamp=${{ steps.timestamp.outputs.deployment_timestamp }}
-          capabilities: CAPABILITY_NAMED_IAM
-          no-fail-on-empty-changeset: "1"
-
-  # Deploy API Gateway
-  deploy-api-gateway:
-    name: Deploy API Gateway
-    runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment }}
-    needs: [deploy-cognito, deploy-message-service, deploy-user-service]
-    outputs:
-      ApiGatewayURL: ${{ steps.deploy-api-gateway-stack.outputs.ApiGatewayURL }}
-    env:
-      ENVIRONMENT: ${{ github.event.inputs.environment }}
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Configure AWS credentials
-        uses: ./.github/actions/configure-aws-credentials
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-
-      - name: Deploy API Gateway Stack
-        id: deploy-api-gateway-stack
-        uses: aws-actions/aws-cloudformation-github-deploy@v1
-        with:
-          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-ApiGatewayStack
-          template: iac/api-gateway.yaml
-          parameter-overrides: >-
-            ApplicationName=${{ vars.APPLICATION_NAME }},
-            Environment=${{ env.ENVIRONMENT }},
-            UserPoolId=${{ needs.deploy-cognito.outputs.UserPoolId }},
-            UserServiceURL=${{ needs.deploy-user-service.outputs.UserServiceURL }},
-            MessageServiceURL=${{ needs.deploy-message-service.outputs.LoadBalancerURL }},
-            DomainName=${{ vars.API_DOMAIN_NAME }},
-            CertificateArn=${{ vars.ACM_CERTIFICATE_ARN }}
           capabilities: CAPABILITY_NAMED_IAM
           no-fail-on-empty-changeset: "1"
 
@@ -351,13 +392,12 @@ jobs:
   deploy-frontend-infrastructure:
     name: Deploy Frontend Infrastructure
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment }}
+    environment: ${{ inputs.environment }}
     outputs:
       BucketName: ${{ steps.deploy-cloudfront-stack.outputs.BucketName }}
       CloudFrontDistributionId: ${{ steps.deploy-cloudfront-stack.outputs.CloudFrontDistributionId }}
     env:
-      ENVIRONMENT: ${{ github.event.inputs.environment }}
-      DISTRIBUTION_NAME: main
+      DISTRIBUTION_NAME: cf-main
 
     steps:
       - name: Checkout code
@@ -376,11 +416,11 @@ jobs:
         id: deploy-cloudfront-stack
         uses: aws-actions/aws-cloudformation-github-deploy@v1
         with:
-          name: ${{ vars.APPLICATION_NAME }}-${{ env.ENVIRONMENT }}-CloudFrontStack
+          name: ${{ vars.APPLICATION_NAME }}-${{ inputs.environment }}-CloudFrontStack
           template: iac/cloudfront.yaml
           parameter-overrides: >-
             ApplicationName=${{ vars.APPLICATION_NAME }},
-            Environment=${{ env.ENVIRONMENT }},
+            Environment=${{ inputs.environment }},
             DistributionName=${{ env.DISTRIBUTION_NAME }},
             DomainName=${{ vars.DOMAIN_NAME }},
             CertificateArn=${{ vars.ACM_CERTIFICATE_ARN }}
@@ -391,8 +431,8 @@ jobs:
   deploy-frontend:
     name: Deploy Frontend
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment }}
-    needs: [deploy-frontend-infrastructure, deploy-api-gateway]
+    environment: ${{ inputs.environment }}
+    needs: [deploy-frontend-infrastructure, deploy-api-gateway, deploy-cognito]
 
     steps:
       - name: Checkout code
@@ -418,7 +458,7 @@ jobs:
         run: |
           cd frontend
           npm install
-          REACT_APP_API_URL=https://${{ vars.API_DOMAIN_NAME }} REACT_APP_USER_POOL_ID=${{ needs.deploy-cognito.outputs.UserPoolId }} REACT_APP_USER_POOL_CLIENT_ID=${{ needs.deploy-cognito.outputs.UserPoolClientId }} npm run build
+          REACT_APP_API_URL=${{ needs.deploy-api-gateway.outputs.ApiGatewayCustomDomainURL }} REACT_APP_USER_POOL_ID=${{ needs.deploy-cognito.outputs.UserPoolId }} REACT_APP_USER_POOL_CLIENT_ID=${{ needs.deploy-cognito.outputs.UserPoolClientId }} npm run build
 
       - name: Deploy Frontend to S3
         uses: reggionick/s3-deploy@v4

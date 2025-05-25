@@ -20,7 +20,11 @@ func main() {
 	}
 
 	// Initialize the API server
-	server := msgsvc.NewServer(cfg)
+	server, err := msgsvc.NewServer(cfg)
+	if err != nil {
+		log.Fatalf("Failed to create server: %v", err)
+		os.Exit(1)
+	}
 
 	// Start the server
 	log.Printf("Starting server on %s", cfg.ServerAddress)

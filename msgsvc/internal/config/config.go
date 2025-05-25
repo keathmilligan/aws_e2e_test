@@ -10,6 +10,8 @@ type Config struct {
 	CorsOrigins       string
 	UseDynamoDB       bool
 	DynamoDBTableName string
+	JWKSUrl           string
+	JWTIssuer         string
 }
 
 // New returns a new Config struct
@@ -19,6 +21,8 @@ func New() *Config {
 		CorsOrigins:       getEnv("CORS_ORIGINS", "*"),
 		UseDynamoDB:       getEnvBool("USE_DYNAMODB", false),
 		DynamoDBTableName: getEnv("DYNAMODB_TABLE_NAME", "messages"),
+		JWKSUrl:           getEnv("JWKS_URL", ""),
+		JWTIssuer:         getEnv("JWT_ISSUER", ""),
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"github.com/aws_e2e_test/msgsvc/internal/config"
 	"github.com/aws_e2e_test/msgsvc/internal/model"
 	"github.com/aws_e2e_test/msgsvc/internal/store"
+	"github.com/aws_e2e_test/shared/auth"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
@@ -22,10 +23,11 @@ type Server struct {
 	router       *gin.Engine
 	config       *config.Config
 	messageStore MessageStore
+	jwtValidator *auth.JWTValidator
 }
 
 // NewServer creates a new API server
-func NewServer(cfg *config.Config) *Server {
+func NewServer(cfg *config.Config) (*Server, error) {
 	var messageStore MessageStore
 	var err error
 
@@ -44,23 +46,32 @@ func NewServer(cfg *config.Config) *Server {
 		messageStore = store.NewMessageStore()
 	}
 
+	// Initialize JWT validator
+	jwtValidator := auth.NewJWTValidator(auth.JWTValidatorConfig{
+		JWKSURL: cfg.JWKSUrl,
+		Issuer:  cfg.JWTIssuer,
+	})
+
 	server := &Server{
 		router:       gin.Default(),
 		config:       cfg,
 		messageStore: messageStore,
+		jwtValidator: jwtValidator,
 	}
 
 	// Configure CORS
 	corsConfig := cors.DefaultConfig()
 	corsConfig.AllowOrigins = []string{cfg.CorsOrigins}
 	corsConfig.AllowMethods = []string{"GET", "POST", "OPTIONS"}
-	corsConfig.AllowHeaders = []string{"Origin", "Content-Type"}
+	corsConfig.AllowHeaders = []string{"Origin", "Content-Type", "Authorization"}
+	corsConfig.ExposeHeaders = []string{"Content-Length"}
+	corsConfig.AllowCredentials = true
 	server.router.Use(cors.New(corsConfig))
 
 	// Register routes
 	server.registerRoutes()
 
-	return server
+	return server, nil
 }
 
 // Run starts the server
@@ -78,11 +89,13 @@ func (s *Server) registerRoutes() {
 	// API endpoints
 	api := s.router.Group("/")
 	{
-		// Get all messages
-		api.GET("/messages", s.getMessages)
-
-		// Create a new message
-		api.POST("/messages", s.createMessage)
+		// Protected message endpoints (require authentication)
+		protected := api.Group("/messages")
+		protected.Use(auth.JWTAuthMiddleware(s.jwtValidator))
+		{
+			protected.GET("", s.getMessages)
+			protected.POST("", s.createMessage)
+		}
 	}
 }
 

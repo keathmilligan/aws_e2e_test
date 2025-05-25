@@ -4,7 +4,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/aws_e2e_test/usersvc/internal/auth"
+	"github.com/aws_e2e_test/shared/auth"
+	localauth "github.com/aws_e2e_test/usersvc/internal/auth"
 	"github.com/aws_e2e_test/usersvc/internal/config"
 	"github.com/aws_e2e_test/usersvc/internal/model"
 	"github.com/aws_e2e_test/usersvc/internal/store"
@@ -26,7 +27,8 @@ type Server struct {
 	router        *gin.Engine
 	config        *config.Config
 	userStore     UserStore
-	cognitoClient *auth.CognitoClient
+	cognitoClient *localauth.CognitoClient
+	jwtValidator  *auth.JWTValidator
 }
 
 // NewServer creates a new API server
@@ -50,7 +52,7 @@ func NewServer(cfg *config.Config) (*Server, error) {
 	}
 
 	// Initialize Cognito client
-	cognitoClient, err := auth.NewCognitoClient(
+	cognitoClient, err := localauth.NewCognitoClient(
 		cfg.CognitoRegion,
 		cfg.UserPoolID,
 		cfg.UserPoolClientID,
@@ -60,11 +62,15 @@ func NewServer(cfg *config.Config) (*Server, error) {
 		return nil, err
 	}
 
+	// Initialize JWT validator
+	jwtValidator := auth.NewCognitoJWTValidator(cfg.CognitoRegion, cfg.UserPoolID)
+
 	server := &Server{
 		router:        gin.Default(),
 		config:        cfg,
 		userStore:     userStore,
 		cognitoClient: cognitoClient,
+		jwtValidator:  jwtValidator,
 	}
 
 	// Configure CORS
@@ -106,12 +112,16 @@ func (s *Server) registerRoutes() {
 		api.POST("/auth/forgot-password", s.forgotPassword)
 		api.POST("/auth/confirm-forgot-password", s.confirmForgotPassword)
 
-		// User endpoints
-		api.GET("/users", s.getUsers)
-		api.GET("/users/:email", s.getUserByEmail)
-		api.POST("/users", s.createUser)
-		api.PUT("/users/:email", s.updateUser)
-		api.DELETE("/users/:email", s.deleteUser)
+		// Protected user endpoints (require authentication)
+		protected := api.Group("/users")
+		protected.Use(auth.JWTAuthMiddleware(s.jwtValidator))
+		{
+			protected.GET("", s.getUsers)
+			protected.GET("/:email", s.getUserByEmail)
+			protected.POST("", s.createUser)
+			protected.PUT("/:email", s.updateUser)
+			protected.DELETE("/:email", s.deleteUser)
+		}
 	}
 }
 

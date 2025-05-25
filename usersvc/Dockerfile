@@ -3,20 +3,10 @@ FROM golang:1.24-alpine AS builder
 # Set working directory
 WORKDIR /app
 
-# Install dependencies
-RUN apk add --no-cache git
+COPY shared/ ./shared/
+COPY usersvc/ ./usersvc/
 
-# Copy go.mod and go.sum files
-COPY go.mod go.sum ./
-
-# Download dependencies
-RUN go mod download
-
-# Copy the source code
-COPY . .
-
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o usersvc ./cmd/usersvc
+RUN cd usersvc && CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o usersvc ./cmd/usersvc
 
 # Use a minimal alpine image for the final image
 FROM alpine:3.21
@@ -28,7 +18,7 @@ RUN apk --no-cache add ca-certificates
 WORKDIR /app
 
 # Copy the binary from the builder stage
-COPY --from=builder /app/usersvc .
+COPY --from=builder /app/usersvc/usersvc .
 
 # Expose the port
 EXPOSE 8081

@@ -22,6 +22,10 @@ Parameters:
     Type: String
     Description: URL of the Message Service
 
+  ALBDNSName:
+    Type: String
+    Description: DNS name of the Application Load Balancer
+
   DomainName:
     Type: String
     Description: Domain name for the API Gateway
@@ -120,15 +124,9 @@ Resources:
       Integration:
         Type: HTTP_PROXY
         IntegrationHttpMethod: ANY
-        Uri: !Sub "${UserServiceURL}/users"
+        Uri: !Sub "http://${ALBDNSName}/users"
         ConnectionType: INTERNET
         TimeoutInMillis: 29000
-        IntegrationResponses:
-          - StatusCode: 200
-      MethodResponses:
-        - StatusCode: 200
-          ResponseModels:
-            application/json: "Empty"
 
   # User Service Proxy ANY Method
   UserServiceProxyAnyMethod:
@@ -144,17 +142,11 @@ Resources:
       Integration:
         Type: HTTP_PROXY
         IntegrationHttpMethod: ANY
-        Uri: !Sub "${UserServiceURL}/users/{proxy}"
+        Uri: !Sub "http://${ALBDNSName}/users/{proxy}"
         RequestParameters:
           integration.request.path.proxy: method.request.path.proxy
         ConnectionType: INTERNET
         TimeoutInMillis: 29000
-        IntegrationResponses:
-          - StatusCode: 200
-      MethodResponses:
-        - StatusCode: 200
-          ResponseModels:
-            application/json: "Empty"
 
   # Auth Service ANY Method (No authorization required for auth endpoints)
   AuthServiceAnyMethod:
@@ -167,15 +159,9 @@ Resources:
       Integration:
         Type: HTTP_PROXY
         IntegrationHttpMethod: ANY
-        Uri: !Sub "${UserServiceURL}/auth"
+        Uri: !Sub "http://${ALBDNSName}/auth"
         ConnectionType: INTERNET
         TimeoutInMillis: 29000
-        IntegrationResponses:
-          - StatusCode: 200
-      MethodResponses:
-        - StatusCode: 200
-          ResponseModels:
-            application/json: "Empty"
 
   # Auth Service Proxy ANY Method (No authorization required for auth endpoints)
   AuthServiceProxyAnyMethod:
@@ -190,17 +176,11 @@ Resources:
       Integration:
         Type: HTTP_PROXY
         IntegrationHttpMethod: ANY
-        Uri: !Sub "${UserServiceURL}/auth/{proxy}"
+        Uri: !Sub "http://${ALBDNSName}/auth/{proxy}"
         RequestParameters:
           integration.request.path.proxy: method.request.path.proxy
         ConnectionType: INTERNET
         TimeoutInMillis: 29000
-        IntegrationResponses:
-          - StatusCode: 200
-      MethodResponses:
-        - StatusCode: 200
-          ResponseModels:
-            application/json: "Empty"
 
   # Message Service ANY Method (Requires authorization)
   MessageServiceAnyMethod:
@@ -214,15 +194,9 @@ Resources:
       Integration:
         Type: HTTP_PROXY
         IntegrationHttpMethod: ANY
-        Uri: !Sub "${MessageServiceURL}/messages"
+        Uri: !Sub "http://${ALBDNSName}/messages"
         ConnectionType: INTERNET
         TimeoutInMillis: 29000
-        IntegrationResponses:
-          - StatusCode: 200
-      MethodResponses:
-        - StatusCode: 200
-          ResponseModels:
-            application/json: "Empty"
 
   # Message Service Proxy ANY Method (Requires authorization)
   MessageServiceProxyAnyMethod:
@@ -238,17 +212,11 @@ Resources:
       Integration:
         Type: HTTP_PROXY
         IntegrationHttpMethod: ANY
-        Uri: !Sub "${MessageServiceURL}/messages/{proxy}"
+        Uri: !Sub "http://${ALBDNSName}/messages/{proxy}"
         RequestParameters:
           integration.request.path.proxy: method.request.path.proxy
         ConnectionType: INTERNET
         TimeoutInMillis: 29000
-        IntegrationResponses:
-          - StatusCode: 200
-      MethodResponses:
-        - StatusCode: 200
-          ResponseModels:
-            application/json: "Empty"
 
   # API Gateway Deployment
   ApiGatewayDeployment:
@@ -262,7 +230,17 @@ Resources:
       - MessageServiceProxyAnyMethod
     Properties:
       RestApiId: !Ref ApiGateway
+
+  # API Gateway Stage
+  ApiGatewayStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref ApiGateway
+      DeploymentId: !Ref ApiGatewayDeployment
       StageName: !Ref Environment
+      Description: !Sub "API Gateway stage for ${Environment}"
+      Variables:
+        Environment: !Ref Environment
 
   # API Gateway Custom Domain
   ApiGatewayDomainName:
@@ -281,7 +259,7 @@ Resources:
     Properties:
       DomainName: !Ref ApiGatewayDomainName
       RestApiId: !Ref ApiGateway
-      Stage: !Ref Environment
+      Stage: !Ref ApiGatewayStage
 
 Outputs:
   ApiGatewayId:
@@ -292,7 +270,7 @@ Outputs:
 
   ApiGatewayURL:
     Description: URL of the API Gateway
-    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}"
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${ApiGatewayStage}"
     Export:
       Name: !Sub "${ApplicationName}-${Environment}-ApiGatewayURL"
 
